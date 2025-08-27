@@ -93,8 +93,6 @@ import com.google.ai.edge.gallery.ui.modelmanager.ModelInitializationStatusType
 import com.google.ai.edge.gallery.ui.modelmanager.ModelManagerViewModel
 import com.google.ai.edge.gallery.ui.theme.customColors
 import kotlinx.coroutines.launch
-import androidx.compose.runtime.rememberCoroutineScope
-import kotlinx.coroutines.delay
 
 enum class ChatInputType {
   TEXT,
@@ -571,6 +569,10 @@ fun ChatPanel(
           showStopButtonWhenInProgress = showStopButtonInInputWhenInProgress,
           showVideoFrameCaptureButton = task.id === BuiltInTaskId.VIDEO_ANALYSIS,
           onVideoFramesCaptured = { frames ->
+            // Clear previous context when capturing new video frames
+            // This ensures each video analysis starts with fresh context
+            viewModel.clearAllMessages(selectedModel)
+            
             // Send frames directly to the chat with structured analysis prompt
             val imageMessage = ChatMessageImage(
               bitmaps = frames,
@@ -598,7 +600,7 @@ fun ChatPanel(
                   }
                 ],
                 "summary": "Overall summary of what was observed across the frames",
-                "scene_description": "Description of the overall scene and context"
+                "scene_description": "Description of the overall scene context"
               }
               
               Focus on:
@@ -617,17 +619,6 @@ fun ChatPanel(
             
             // Send the video analysis messages
             onSendMessage(selectedModel, listOf(imageMessage, textMessage))
-            
-            // Schedule context clearing after inference completes for video analysis
-            // This allows fresh analysis for each new set of video frames
-            scope.launch {
-              // Wait for the current inference to complete
-              while (uiState.inProgress || uiState.preparing) {
-                delay(500)
-              }
-              // Clear messages to reset context for next video analysis
-              viewModel.clearAllMessages(selectedModel)
-            }
           },
         )
       }
