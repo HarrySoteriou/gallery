@@ -582,21 +582,16 @@ fun ChatPanel(
             val analysisPrompt = """
               Analyze the following sequence of video frames captured at 1 FPS intervals. 
               
-              Please identify people in these frames and provide your response 
+              Please identify unique people in these frames and provide your response 
               in the following JSON format:
               
               {
                 "detected_objects": [
                   {
-                    "name": "object_name",
+                    "name": "person_1", 
                     "confidence": 0.95,
-                    "description": "Concise description of the object",
-                    "position": {
-                      "x": 0.3,
-                      "y": 0.4, 
-                      "width": 0.2,
-                      "height": 0.4
-                    }
+                    "description": "Brief description",
+                    "position": {"x": 0.3, "y": 0.4, "width": 0.2, "height": 0.4}
                   }
                 ],
                 "summary": "Overall summary of what was observed across the frames",
