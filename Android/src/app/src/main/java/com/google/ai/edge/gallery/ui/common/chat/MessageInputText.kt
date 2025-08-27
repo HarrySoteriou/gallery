@@ -156,6 +156,8 @@ fun MessageInputText(
   showImagePickerInMenu: Boolean = false,
   showAudioItemsInMenu: Boolean = false,
   showStopButtonWhenInProgress: Boolean = false,
+  showVideoFrameCaptureButton: Boolean = false,
+  onVideoFramesCaptured: (List<Bitmap>) -> Unit = {},
 ) {
   val context = LocalContext.current
   val lifecycleOwner = LocalLifecycleOwner.current
@@ -307,13 +309,22 @@ fun MessageInputText(
     }
 
     Box(contentAlignment = Alignment.CenterStart) {
-      // A plus button to show a popup menu to add stuff to the chat.
-      IconButton(
-        enabled = !inProgress && !isResettingSession,
-        onClick = { showAddContentMenu = true },
-        modifier = Modifier.offset(x = 16.dp).alpha(0.8f),
-      ) {
-        Icon(Icons.Rounded.Add, contentDescription = "", modifier = Modifier.size(28.dp))
+      // Show video capture button for video analysis tasks, otherwise show the + menu button
+      if (showVideoFrameCaptureButton) {
+        VideoFrameCaptureButton(
+          onFramesCaptured = onVideoFramesCaptured,
+          enabled = !inProgress && !isResettingSession,
+          modifier = Modifier.offset(x = 16.dp).alpha(0.8f)
+        )
+      } else {
+        // A plus button to show a popup menu to add stuff to the chat.
+        IconButton(
+          enabled = !inProgress && !isResettingSession,
+          onClick = { showAddContentMenu = true },
+          modifier = Modifier.offset(x = 16.dp).alpha(0.8f),
+        ) {
+          Icon(Icons.Rounded.Add, contentDescription = "", modifier = Modifier.size(28.dp))
+        }
       }
       Row(
         modifier =
@@ -325,10 +336,13 @@ fun MessageInputText(
         val enableAddImageMenuItems = (imageCount + pickedImages.size) < MAX_IMAGE_COUNT
         val enableRecordAudioClipMenuItems =
           (audioClipMessageCount + pickedAudioClips.size) < MAX_AUDIO_CLIP_COUNT
-        DropdownMenu(
-          expanded = showAddContentMenu,
-          onDismissRequest = { showAddContentMenu = false },
-        ) {
+        
+        // Only show dropdown menu if not using video capture button
+        if (!showVideoFrameCaptureButton) {
+          DropdownMenu(
+            expanded = showAddContentMenu,
+            onDismissRequest = { showAddContentMenu = false },
+          ) {
           // Image related menu items.
           if (showImagePickerInMenu) {
             // Take a picture.
@@ -480,6 +494,7 @@ fun MessageInputText(
               showTextInputHistorySheet = true
             },
           )
+          }
         }
 
         // Text field.

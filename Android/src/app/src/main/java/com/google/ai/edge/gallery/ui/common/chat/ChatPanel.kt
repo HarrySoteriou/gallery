@@ -85,6 +85,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.google.ai.edge.gallery.R
 import com.google.ai.edge.gallery.data.BuiltInTaskId
+import androidx.compose.ui.graphics.asImageBitmap
 import com.google.ai.edge.gallery.data.Model
 import com.google.ai.edge.gallery.data.Task
 import com.google.ai.edge.gallery.ui.common.ErrorDialog
@@ -92,6 +93,8 @@ import com.google.ai.edge.gallery.ui.modelmanager.ModelInitializationStatusType
 import com.google.ai.edge.gallery.ui.modelmanager.ModelManagerViewModel
 import com.google.ai.edge.gallery.ui.theme.customColors
 import kotlinx.coroutines.launch
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.delay
 
 enum class ChatInputType {
   TEXT,
@@ -491,7 +494,7 @@ fun ChatPanel(
           )
         }
       }
-      // Show an info message for ask image task to get users started.
+      // Show an info message for ask audio task to get users started.
       else if (task.id == BuiltInTaskId.LLM_ASK_AUDIO && messages.isEmpty()) {
         Column(
           modifier = Modifier.padding(horizontal = 16.dp).fillMaxSize(),
@@ -502,6 +505,22 @@ fun ChatPanel(
             ChatMessageInfo(
               content =
                 "To get started, tap the + icon to add your audio clip. Limited to 1 clip up to 30 seconds long."
+            ),
+            smallFontSize = false,
+          )
+        }
+      }
+      // Show an info message for video analysis task to get users started.
+      else if (task.id == BuiltInTaskId.VIDEO_ANALYSIS && messages.isEmpty()) {
+        Column(
+          modifier = Modifier.padding(horizontal = 16.dp).fillMaxSize(),
+          horizontalAlignment = Alignment.CenterHorizontally,
+          verticalArrangement = Arrangement.Center,
+        ) {
+          MessageBodyInfo(
+            ChatMessageInfo(
+              content =
+                "To get started, click the video camera icon below to capture 10 frames at 1 FPS intervals, then type a prompt to analyze the video frames."
             ),
             smallFontSize = false,
           )
@@ -550,6 +569,66 @@ fun ChatPanel(
           showAudioItemsInMenu =
             selectedModel.llmSupportAudio && task.id === BuiltInTaskId.LLM_ASK_AUDIO,
           showStopButtonWhenInProgress = showStopButtonInInputWhenInProgress,
+          showVideoFrameCaptureButton = task.id === BuiltInTaskId.VIDEO_ANALYSIS,
+          onVideoFramesCaptured = { frames ->
+            // Send frames directly to the chat with structured analysis prompt
+            val imageMessage = ChatMessageImage(
+              bitmaps = frames,
+              imageBitMaps = frames.map { it.asImageBitmap() },
+              side = ChatSide.USER
+            )
+            val analysisPrompt = """
+              Analyze the following sequence of video frames captured at 1 FPS intervals. 
+              
+              Please identify and describe the objects present in these frames and provide your response 
+              in the following JSON format:
+              
+              {
+                "detected_objects": [
+                  {
+                    "name": "object_name",
+                    "confidence": 0.95,
+                    "description": "detailed description of the object",
+                    "position": {
+                      "x": 0.3,
+                      "y": 0.4, 
+                      "width": 0.2,
+                      "height": 0.4
+                    }
+                  }
+                ],
+                "summary": "Overall summary of what was observed across the frames",
+                "scene_description": "Description of the overall scene and context"
+              }
+              
+              Focus on:
+              1. Identifying distinct objects and their characteristics
+              2. Tracking object movement or changes across frames
+              3. Providing confidence scores for each detection
+              4. Describing the overall scene context
+              
+              Please be thorough but concise in your descriptions.
+            """.trimIndent()
+            
+            val textMessage = ChatMessageText(
+              content = analysisPrompt,
+              side = ChatSide.USER
+            )
+            
+            // Send the video analysis messages
+            onSendMessage(selectedModel, listOf(imageMessage, textMessage))
+            
+            // Schedule context clearing after inference completes for video analysis
+            // This allows fresh analysis for each new set of video frames
+            scope.launch {
+              // Wait for the current inference to complete
+              while (uiState.inProgress || uiState.preparing) {
+                delay(500)
+              }
+              // Clear messages to reset context for next video analysis
+              viewModel.clearAllMessages(selectedModel)
+            }
+          },
         )
       }
 
