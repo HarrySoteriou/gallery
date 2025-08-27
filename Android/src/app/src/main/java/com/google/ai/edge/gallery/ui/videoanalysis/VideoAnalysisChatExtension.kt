@@ -203,11 +203,12 @@ fun VideoAnalysisQuickStart(
   }
 }
 
+
 private fun buildVideoAnalysisPrompt(): String {
   return """
     Analyze the following sequence of video frames captured at 1 FPS intervals. 
     
-    Please identify and describe the objects present in these frames and provide your response 
+    Please identify people in these frames and provide your response 
     in the following JSON format:
     
     {
@@ -215,7 +216,7 @@ private fun buildVideoAnalysisPrompt(): String {
         {
           "name": "object_name",
           "confidence": 0.95,
-          "description": "detailed description of the object",
+          "description": "Concise description of the object",
           "position": {
             "x": 0.3,
             "y": 0.4, 
@@ -229,8 +230,8 @@ private fun buildVideoAnalysisPrompt(): String {
     }
     
     Focus on:
-    1. Identifying distinct objects and their characteristics
-    2. Tracking object movement or changes across frames
+    1. Identifying distinct people and their characteristics
+    2. Tracking their movement or changes across frames
     3. Providing confidence scores for each detection
     4. Describing the overall scene context
     
