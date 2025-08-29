@@ -106,6 +106,7 @@ object BuiltInTaskId {
   const val LLM_ASK_IMAGE = "llm_ask_image"
   const val LLM_ASK_AUDIO = "llm_ask_audio"
   const val VIDEO_ANALYSIS = "llm_video_analysis"
+  const val LLM_RAG = "llm_rag"
 }
 
 private val allBuiltInTaskIds: Set<String> =

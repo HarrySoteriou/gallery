@@ -88,6 +88,8 @@ dependencies {
   implementation(libs.mediapipe.tasks.text)
   implementation(libs.mediapipe.tasks.genai)
   implementation(libs.mediapipe.tasks.imagegen)
+  // RAG SDK dependencies
+  implementation("com.google.ai.edge.localagents:localagents-rag:0.1.0")
   implementation(libs.commonmark)
   implementation(libs.richtext)
   implementation(libs.tflite)
