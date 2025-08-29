@@ -573,6 +573,13 @@ fun ChatPanel(
             // This ensures each video analysis starts with fresh context
             viewModel.clearAllMessages(selectedModel)
             
+            // IMPROVED: Also clear model's internal context using the unified approach
+            // This fixes the null output issue on subsequent inferences
+            if (task.id == BuiltInTaskId.VIDEO_ANALYSIS) {
+              com.google.ai.edge.gallery.ui.videoanalysis.VideoAnalysisMemoryManager
+                .clearContextForNewBatch(task, selectedModel)
+            }
+            
             // Send frames directly to the chat with structured analysis prompt
             val imageMessage = ChatMessageImage(
               bitmaps = frames,

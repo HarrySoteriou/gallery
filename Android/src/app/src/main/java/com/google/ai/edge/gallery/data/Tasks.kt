@@ -117,6 +117,52 @@ private val allBuiltInTaskIds: Set<String> =
     BuiltInTaskId.VIDEO_ANALYSIS,
   )
 
+/**
+ * Centralized task capability detection for consistent memory management across all tasks.
+ */
+object TaskCapabilities {
+  private val imageSupportedTasks = setOf(
+    BuiltInTaskId.LLM_ASK_IMAGE,
+    BuiltInTaskId.VIDEO_ANALYSIS
+  )
+  
+  private val audioSupportedTasks = setOf(
+    BuiltInTaskId.LLM_ASK_AUDIO
+  )
+  
+  /**
+   * Determines if a task supports image processing for memory management purposes.
+   * Used by session reset logic to properly configure the LLM session.
+   */
+  fun supportsImages(taskId: String): Boolean {
+    return imageSupportedTasks.contains(taskId)
+  }
+  
+  /**
+   * Determines if a task supports audio processing for memory management purposes.
+   * Used by session reset logic to properly configure the LLM session.
+   */
+  fun supportsAudio(taskId: String): Boolean {
+    return audioSupportedTasks.contains(taskId)
+  }
+  
+  /**
+   * Gets the image support configuration for a task and model combination.
+   * This ensures consistent behavior across all multiturn and batch processing tasks.
+   */
+  fun getImageSupport(task: Task, model: Model): Boolean {
+    return model.llmSupportImage && supportsImages(task.id)
+  }
+  
+  /**
+   * Gets the audio support configuration for a task and model combination.
+   * This ensures consistent behavior across all multiturn and batch processing tasks.
+   */
+  fun getAudioSupport(task: Task, model: Model): Boolean {
+    return model.llmSupportAudio && supportsAudio(task.id)
+  }
+}
+
 fun isBuiltInTask(id: String): Boolean {
   return allBuiltInTaskIds.contains(id)
 }

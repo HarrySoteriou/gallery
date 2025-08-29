@@ -79,12 +79,9 @@ class LlmSingleTurnViewModel @Inject constructor() : ViewModel() {
         delay(100)
       }
 
-      val supportImage =
-        model.llmSupportImage &&
-          task.id == com.google.ai.edge.gallery.data.BuiltInTaskId.LLM_ASK_IMAGE
-      val supportAudio =
-        model.llmSupportAudio &&
-          task.id == com.google.ai.edge.gallery.data.BuiltInTaskId.LLM_ASK_AUDIO
+      // Use centralized task capability detection for consistent behavior
+      val supportImage = com.google.ai.edge.gallery.data.TaskCapabilities.getImageSupport(task, model)
+      val supportAudio = com.google.ai.edge.gallery.data.TaskCapabilities.getAudioSupport(task, model)
       LlmChatModelHelper.resetSession(
         model = model,
         supportImage = supportImage,

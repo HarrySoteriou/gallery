@@ -27,6 +27,7 @@ import com.google.ai.edge.gallery.data.BuiltInTaskId
 import com.google.ai.edge.gallery.data.Category
 import com.google.ai.edge.gallery.data.Model
 import com.google.ai.edge.gallery.data.Task
+import com.google.ai.edge.gallery.data.TaskCapabilities
 import com.google.ai.edge.gallery.ui.llmchat.LlmChatModelHelper
 import dagger.Module
 import dagger.Provides
@@ -73,6 +74,25 @@ class VideoAnalysisTask @Inject constructor() : CustomTask {
     onDone: () -> Unit,
   ) {
     LlmChatModelHelper.cleanUp(model = model, onDone = onDone)
+  }
+
+  /**
+   * Clears the model's context memory for new batch processing.
+   * This reuses the same logic as multiturn tasks for consistency.
+   * 
+   * Usage: Call this before processing a new batch of video frames
+   * to ensure the model's internal context is cleared while keeping
+   * the model loaded in memory.
+   */
+  fun clearContextForNewBatch(model: Model) {
+    val supportImage = TaskCapabilities.getImageSupport(task, model)
+    val supportAudio = TaskCapabilities.getAudioSupport(task, model)
+    
+    LlmChatModelHelper.resetSession(
+      model = model,
+      supportImage = supportImage,
+      supportAudio = supportAudio,
+    )
   }
 
   @Composable
