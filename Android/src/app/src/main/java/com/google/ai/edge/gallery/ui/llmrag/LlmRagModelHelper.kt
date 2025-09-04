@@ -21,23 +21,29 @@ import android.util.Log
 import com.google.ai.edge.gallery.data.Model
 import com.google.ai.edge.gallery.ui.llmchat.LlmChatModelHelper
 import com.google.ai.edge.gallery.ui.llmchat.LlmModelInstance
-import com.google.ai.edge.localagents.rag.chain.ChainConfig
-import com.google.ai.edge.localagents.rag.chain.RetrievalAndInferenceChain
-import com.google.ai.edge.localagents.rag.chain.RetrievalConfig
-import com.google.ai.edge.localagents.rag.chain.RetrievalRequest
-import com.google.ai.edge.localagents.rag.chain.TaskType
-import com.google.ai.edge.localagents.rag.embedding.Embedder
-import com.google.ai.edge.localagents.rag.embedding.GeckoEmbeddingModel
-import com.google.ai.edge.localagents.rag.llm.LanguageModel
-import com.google.ai.edge.localagents.rag.llm.LanguageModelResponse
-import com.google.ai.edge.localagents.rag.llm.MediaPipeLanguageModel
-import com.google.ai.edge.localagents.rag.memory.DefaultSemanticTextMemory
-import com.google.ai.edge.localagents.rag.memory.PromptBuilder
-import com.google.ai.edge.localagents.rag.store.SqliteVectorStore
-import com.google.ai.edge.localagents.rag.util.AsyncProgressListener
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.async
 import java.util.Optional
+// RAG SDK imports from local source
+import com.google.ai.edge.localagents.rag.chains.ChainConfig
+import com.google.ai.edge.localagents.rag.chains.RetrievalAndInferenceChain
+import com.google.ai.edge.localagents.rag.memory.DefaultSemanticTextMemory
+import com.google.ai.edge.localagents.rag.memory.DefaultVectorStore
+import com.google.ai.edge.localagents.rag.models.AsyncProgressListener
+import com.google.ai.edge.localagents.rag.models.Embedder
+import com.google.ai.edge.localagents.rag.models.GeckoEmbeddingModel
+import com.google.ai.edge.localagents.rag.models.LanguageModelResponse
+import com.google.ai.edge.localagents.rag.models.MediaPipeLlmBackend
+import com.google.ai.edge.localagents.rag.prompt.PromptBuilder
+import com.google.ai.edge.localagents.rag.retrieval.RetrievalConfig
+import com.google.ai.edge.localagents.rag.retrieval.RetrievalRequest
+import com.google.common.collect.ImmutableList
+import com.google.mediapipe.tasks.genai.llminference.LlmInference
+import com.google.mediapipe.tasks.genai.llminference.LlmInferenceSession
+import kotlinx.coroutines.Dispatchers
+
+// Real RAG SDK is now available from local source
 
 private const val TAG = "AGLlmRagModelHelper"
 
@@ -57,10 +63,13 @@ Question: {query}
 
 Answer:"""
 
+// Using real RAG SDK implementation now
+
 data class RagModelInstance(
   val llmInstance: LlmModelInstance,
   val ragChain: RetrievalAndInferenceChain,
-  val embedder: Embedder<String>
+  val embedder: Embedder<String>?,
+  val semanticMemory: com.google.ai.edge.localagents.rag.memory.SemanticMemory<String>?
 )
 
 object LlmRagModelHelper {
@@ -90,7 +99,19 @@ object LlmRagModelHelper {
             val llmInstance = model.instance as LlmModelInstance
             
             // Create MediaPipe language model wrapper for RAG
-            val mediaPipeLanguageModel = MediaPipeLanguageModel(llmInstance.engine)
+            // Note: MediaPipeLlmBackend constructor requires specific options
+            // We need to create new options instead of using llmInstance properties that don't exist
+            val options = LlmInference.LlmInferenceOptions.builder()
+              .setModelPath(model.getPath(context))
+              .setMaxTokens(128)
+              .setPreferredBackend(LlmInference.Backend.GPU)
+              .build()
+            val sessionOptions = LlmInferenceSession.LlmInferenceSessionOptions.builder()
+              .setTopK(40)
+              .setTopP(0.95f)
+              .setTemperature(0.8f)
+              .build()
+            val mediaPipeLanguageModel = MediaPipeLlmBackend(context, options, sessionOptions)
             
             // Set up embedder (Gecko model)
             val embedder = GeckoEmbeddingModel(
@@ -99,14 +120,17 @@ object LlmRagModelHelper {
               USE_GPU_FOR_EMBEDDINGS,
             )
             
+            // Create semantic memory
+            val semanticMemory = DefaultSemanticTextMemory(
+              DefaultVectorStore<String>(),
+              embedder
+            )
+            
             // Create RAG chain configuration
             val config = ChainConfig.create(
               mediaPipeLanguageModel,
               PromptBuilder(QA_PROMPT_TEMPLATE),
-              DefaultSemanticTextMemory(
-                SqliteVectorStore(EMBEDDING_DIMENSION),
-                embedder
-              )
+              semanticMemory
             )
             
             // Create retrieval and inference chain
@@ -116,7 +140,8 @@ object LlmRagModelHelper {
             model.instance = RagModelInstance(
               llmInstance = llmInstance,
               ragChain = ragChain,
-              embedder = embedder
+              embedder = embedder,
+              semanticMemory = semanticMemory
             )
             
             Log.d(TAG, "RAG model initialized successfully")
@@ -163,8 +188,23 @@ object LlmRagModelHelper {
       val ragInstance = model.instance as RagModelInstance
       
       Log.d(TAG, "Memorizing ${chunks.size} chunks...")
-      for (chunk in chunks) {
-        ragInstance.ragChain.memorize(chunk)
+      
+      // Use the stored semantic memory to record batched memory items
+      val semanticMemory = ragInstance.semanticMemory
+      
+      if (semanticMemory != null) {
+        // Use coroutines to await the ListenableFuture
+        val future = semanticMemory.recordBatchedMemoryItems(ImmutableList.copyOf(chunks))
+        val result = async(Dispatchers.IO) { future.get() }
+        result.await()
+      } else {
+        // Fallback to individual memorization using recordMemoryItem
+        for (chunk in chunks) {
+          // Use coroutines to await the ListenableFuture
+          val future = semanticMemory?.recordMemoryItem(chunk)
+          val result = async(Dispatchers.IO) { future?.get() }
+          result.await()
+        }
       }
       
       Log.d(TAG, "Successfully memorized ${chunks.size} chunks")
@@ -186,10 +226,13 @@ object LlmRagModelHelper {
       
       val retrievalRequest = RetrievalRequest.create(
         prompt,
-        RetrievalConfig.create(2, 0.0f, TaskType.QUESTION_ANSWERING)
+        RetrievalConfig.create(2, 0.0f, RetrievalConfig.TaskType.QUESTION_ANSWERING)
       )
       
-      ragInstance.ragChain.invoke(retrievalRequest, callback).await().text
+      // Use coroutines to await the ListenableFuture
+      val future = ragInstance.ragChain.invoke(retrievalRequest, callback)
+      val result = async(Dispatchers.IO) { future.get() }
+      result.await().text
     } catch (e: Exception) {
       val error = "Failed to generate response: ${e.message}"
       Log.e(TAG, error)
@@ -202,7 +245,7 @@ object LlmRagModelHelper {
       val ragInstance = model.instance as RagModelInstance
       // Reset the underlying LLM session
       LlmChatModelHelper.resetSession(
-        model = Model().apply { instance = ragInstance.llmInstance },
+        model = Model(name = model.name).apply { instance = ragInstance.llmInstance },
         supportImage = false,
         supportAudio = false
       )

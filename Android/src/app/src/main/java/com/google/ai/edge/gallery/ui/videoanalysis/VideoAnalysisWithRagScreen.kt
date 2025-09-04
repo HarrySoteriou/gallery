@@ -46,8 +46,8 @@ fun VideoAnalysisWithRagScreen(
   modifier: Modifier = Modifier,
   ragViewModel: LlmRagViewModel = hiltViewModel(),
 ) {
-  val selectedModel by modelManagerViewModel.selectedModel.collectAsStateWithLifecycle()
   val modelManagerUiState by modelManagerViewModel.uiState.collectAsStateWithLifecycle()
+  val selectedModel = modelManagerUiState.selectedModel
   
   var capturedFrames by remember { mutableStateOf<List<Bitmap>>(emptyList()) }
   var batchCount by remember { mutableStateOf(0) }
@@ -122,9 +122,9 @@ fun VideoAnalysisWithRagScreen(
               style = MaterialTheme.typography.bodySmall
             )
             Text(
-              text = selectedModel?.name ?: "None selected",
+              text = selectedModel.name,
               style = MaterialTheme.typography.bodySmall,
-              color = if (selectedModel?.isReady(modelManagerUiState.modelDownloadStatus) == true) 
+              color = if (selectedModel.isReady(modelManagerUiState.modelDownloadStatus)) 
                 Color(0xFF4CAF50) else Color(0xFFF44336)
             )
           }
@@ -168,7 +168,7 @@ fun VideoAnalysisWithRagScreen(
         
         Spacer(modifier = Modifier.height(12.dp))
         
-        val canAnalyze = selectedModel?.isReady(modelManagerUiState.modelDownloadStatus) == true && 
+        val canAnalyze = selectedModel.isReady(modelManagerUiState.modelDownloadStatus) && 
                         ragModel != null && !isAnalyzing
         
         if (canAnalyze) {
@@ -188,21 +188,18 @@ fun VideoAnalysisWithRagScreen(
                 onClick = {
                   coroutineScope.launch {
                     isAnalyzing = true
-                    selectedModel?.let { vlm ->
-                      ragModel?.let { rag ->
-                        VideoAnalysisRagIntegration.analyzeAndMemorizeBatch(
-                          vlmModel = vlm,
-                          ragModel = rag,
-                          frames = capturedFrames,
-                          batchIndex = batchCount
-                        ).let { (result, error) ->
-                          if (error.isEmpty()) {
-                            lastAnalysisResult = result
-                            batchCount++
-                          } else {
-                            lastAnalysisResult = "Error: $error"
-                          }
-                        }
+                    ragModel?.let { rag ->
+                      val result = VideoAnalysisRagIntegration.analyzeAndMemorizeBatch(
+                        vlmModel = selectedModel,
+                        ragModel = rag,
+                        frames = capturedFrames,
+                        batchIndex = batchCount
+                      )
+                      if (result.second.isEmpty()) {
+                        lastAnalysisResult = result.first
+                        batchCount++
+                      } else {
+                        lastAnalysisResult = "Error: ${result.second}"
                       }
                     }
                     isAnalyzing = false
@@ -279,11 +276,8 @@ fun VideoAnalysisWithRagScreen(
           ) {
             Button(
               onClick = {
-                coroutineScope.launch {
-                  ragModel?.let { model ->
-                    val summary = VideoAnalysisRagIntegration.getVideoSummary(model)
-                    ragViewModel.sendMessage(model, listOf("Provide a summary of all analyzed video content"))
-                  }
+                ragModel?.let { model ->
+                  ragViewModel.sendMessage(model, listOf("Provide a summary of all analyzed video content"))
                 }
               },
               modifier = Modifier.weight(1f)
@@ -340,7 +334,7 @@ fun VideoAnalysisWithRagScreen(
 }
 
 // Extension function to check model readiness
-private fun Model.isReady(downloadStatus: Map<String, com.google.ai.edge.gallery.data.ModelDownloadStatusInfo>): Boolean {
+private fun Model.isReady(downloadStatus: Map<String, com.google.ai.edge.gallery.data.ModelDownloadStatus>): Boolean {
   val status = downloadStatus[this.name]
   return status?.status == com.google.ai.edge.gallery.data.ModelDownloadStatusType.SUCCEEDED ||
          this.localFileRelativeDirPathOverride.isNotEmpty()

@@ -21,11 +21,12 @@ import androidx.lifecycle.viewModelScope
 import com.google.ai.edge.gallery.data.BuiltInTaskId
 import com.google.ai.edge.gallery.data.Model
 import com.google.ai.edge.gallery.ui.common.chat.ChatMessage
+import com.google.ai.edge.gallery.ui.common.chat.ChatMessageLoading
+import com.google.ai.edge.gallery.ui.common.chat.ChatMessageText
+import com.google.ai.edge.gallery.ui.common.chat.ChatSide
 import com.google.ai.edge.gallery.ui.common.chat.ChatViewModel
-import com.google.ai.edge.gallery.ui.common.chat.MessageBody
-import com.google.ai.edge.gallery.ui.modelmanager.ModelManagerViewModel
-import com.google.ai.edge.localagents.rag.llm.LanguageModelResponse
-import com.google.ai.edge.localagents.rag.util.AsyncProgressListener
+import com.google.ai.edge.localagents.rag.models.AsyncProgressListener
+import com.google.ai.edge.localagents.rag.models.LanguageModelResponse
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -35,9 +36,7 @@ import javax.inject.Inject
 private const val TAG = "AGLlmRagViewModel"
 
 @HiltViewModel
-class LlmRagViewModel @Inject constructor(
-  modelManagerViewModel: ModelManagerViewModel,
-) : ChatViewModel(modelManagerViewModel, BuiltInTaskId.LLM_RAG) {
+class LlmRagViewModel @Inject constructor() : ChatViewModel() {
 
   private var memorizedChunksCount = 0
 
@@ -99,22 +98,22 @@ class LlmRagViewModel @Inject constructor(
     }
   }
 
-  override fun sendMessage(model: Model, content: List<Any>) {
+  fun sendMessage(model: Model, content: List<Any>) {
     val textContent = content.filterIsInstance<String>().joinToString(" ")
     if (textContent.isBlank()) return
 
     viewModelScope.launch {
-      val userMessage = ChatMessage.createUserMessage(content)
-      _messages.value = _messages.value + userMessage
+      val userMessage = ChatMessageText(content = textContent, side = ChatSide.USER)
+      addMessage(model, userMessage)
 
       try {
-        val assistantMessage = ChatMessage.createAssistantMessage(MessageBody.Loading())
-        _messages.value = _messages.value + assistantMessage
+        val assistantMessage = ChatMessageLoading()
+        addMessage(model, assistantMessage)
 
         val progressListener = object : AsyncProgressListener<LanguageModelResponse> {
-          override fun onProgress(partialResult: LanguageModelResponse) {
+          override fun run(partialResult: LanguageModelResponse, done: Boolean) {
             // Update the loading message with partial result
-            updateLastAssistantMessage(model, MessageBody.Text(partialResult.text))
+            updateLastAssistantMessage(model, partialResult.text)
           }
         }
 
@@ -123,34 +122,32 @@ class LlmRagViewModel @Inject constructor(
         }
 
         // Final update with complete response
-        updateLastAssistantMessage(model, MessageBody.Text(response))
+        updateLastAssistantMessage(model, response)
 
       } catch (e: Exception) {
         Log.e(TAG, "Failed to send message: ${e.message}")
-        updateLastAssistantMessage(model, MessageBody.Text("Error: ${e.message}"))
+        updateLastAssistantMessage(model, "Error: ${e.message}")
       }
     }
   }
 
-  override fun clearAllMessages(model: Model) {
-    super.clearAllMessages(model)
+  fun clearAllRagMessages(model: Model) {
+    clearAllMessages(model)
     memorizedChunksCount = 0
     LlmRagModelHelper.clearContext(model)
   }
 
   private fun addSystemMessage(model: Model, text: String) {
-    val systemMessage = ChatMessage.createSystemMessage(MessageBody.Text(text))
-    _messages.value = _messages.value + systemMessage
+    val systemMessage = ChatMessageText(content = text, side = ChatSide.SYSTEM)
+    addMessage(model, systemMessage)
   }
 
-  private fun updateLastAssistantMessage(model: Model, messageBody: MessageBody) {
-    val currentMessages = _messages.value
-    if (currentMessages.isNotEmpty()) {
-      val lastMessage = currentMessages.last()
-      if (lastMessage.isFromAssistant()) {
-        val updatedMessage = lastMessage.copy(messageBody = messageBody)
-        _messages.value = currentMessages.dropLast(1) + updatedMessage
-      }
+  private fun updateLastAssistantMessage(model: Model, text: String) {
+    val lastMessage = getLastMessage(model)
+    if (lastMessage != null && lastMessage.side == ChatSide.AGENT) {
+      removeLastMessage(model)
+      val updatedMessage = ChatMessageText(content = text, side = ChatSide.AGENT)
+      addMessage(model, updatedMessage)
     }
   }
 

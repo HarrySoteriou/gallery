@@ -31,6 +31,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.google.ai.edge.gallery.data.BuiltInTaskId
 import com.google.ai.edge.gallery.ui.common.chat.ChatPanel
+import com.google.ai.edge.gallery.ui.common.chat.ChatMessageText
 import com.google.ai.edge.gallery.ui.modelmanager.ModelManagerViewModel
 import kotlinx.coroutines.launch
 import java.io.BufferedReader
@@ -46,7 +47,8 @@ fun LlmRagScreen(
   val context = LocalContext.current
   val coroutineScope = rememberCoroutineScope()
   
-  val selectedModel by modelManagerViewModel.selectedModel.collectAsStateWithLifecycle()
+  val uiState by modelManagerViewModel.uiState.collectAsStateWithLifecycle()
+  val selectedModel = uiState.selectedModel
   
   // Sample context text for demonstration
   val sampleContext = """
@@ -112,9 +114,7 @@ fun LlmRagScreen(
           
           OutlinedButton(
             onClick = {
-              selectedModel?.let { model ->
-                viewModel.clearAllMessages(model)
-              }
+              viewModel.clearAllRagMessages(selectedModel)
             },
             modifier = Modifier.weight(1f)
           ) {
@@ -124,12 +124,28 @@ fun LlmRagScreen(
       }
     }
 
-    // Chat panel
+    // Get the task and chat panel
+    val task = modelManagerViewModel.getTaskById(BuiltInTaskId.LLM_RAG)!!
+    
     ChatPanel(
-      taskId = BuiltInTaskId.LLM_RAG,
+      task = task,
+      selectedModel = selectedModel,
       modelManagerViewModel = modelManagerViewModel,
-      navigateUp = navigateUp,
       viewModel = viewModel,
+      navigateUp = navigateUp,
+      onSendMessage = { model, messages ->
+        // Convert messages to content and send through viewModel
+        for (message in messages) {
+          viewModel.addMessage(model, message)
+        }
+        val textMessages = messages.filterIsInstance<ChatMessageText>()
+        if (textMessages.isNotEmpty()) {
+          val content = textMessages.map { it.content }
+          viewModel.sendMessage(model, content)
+        }
+      },
+      onRunAgainClicked = { _, _ -> },
+      onBenchmarkClicked = { _, _, _, _ -> },
       modifier = Modifier.weight(1f)
     )
   }

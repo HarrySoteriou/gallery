@@ -29,7 +29,7 @@ plugins {
 
 android {
   namespace = "com.google.ai.edge.gallery"
-  compileSdk = 35
+  compileSdk = 36
 
   defaultConfig {
     applicationId = "com.google.aiedge.gallery"
@@ -55,11 +55,11 @@ android {
     }
   }
   compileOptions {
-    sourceCompatibility = JavaVersion.VERSION_11
-    targetCompatibility = JavaVersion.VERSION_11
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
   }
   kotlinOptions {
-    jvmTarget = "11"
+    jvmTarget = "17"
     freeCompilerArgs += "-Xcontext-receivers"
   }
   buildFeatures {
@@ -88,8 +88,12 @@ dependencies {
   implementation(libs.mediapipe.tasks.text)
   implementation(libs.mediapipe.tasks.genai)
   implementation(libs.mediapipe.tasks.imagegen)
-  // RAG SDK dependencies
-  implementation("com.google.ai.edge.localagents:localagents-rag:0.1.0")
+  // RAG SDK dependencies - now using source code integration
+  implementation("com.google.guava:guava:33.3.1-android")
+  implementation("org.jetbrains.kotlinx:kotlinx-coroutines-guava:1.9.0")
+  implementation("com.google.auto.value:auto-value-annotations:1.10.4")
+  kapt("com.google.auto.value:auto-value:1.10.4")
+  implementation("com.squareup.okhttp3:okhttp:4.12.0")
   implementation(libs.commonmark)
   implementation(libs.richtext)
   implementation(libs.tflite)
