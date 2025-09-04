@@ -34,6 +34,13 @@ import dagger.hilt.components.SingletonComponent
 import dagger.multibindings.IntoSet
 import kotlinx.coroutines.CoroutineScope
 import javax.inject.Inject
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import android.util.Log
 
 class LlmRagTask @Inject constructor() : CustomTask {
   override val task: Task =
@@ -82,12 +89,83 @@ class LlmRagTask @Inject constructor() : CustomTask {
   }
 }
 
+class RagStubTask : CustomTask {
+  override val task: Task =
+    Task(
+      id = BuiltInTaskId.LLM_RAG,
+      label = "RAG Chat (Unavailable)",
+      category = Category.LLM,
+      icon = Icons.Default.Storage,
+      models = mutableListOf(),
+      description = "RAG functionality is currently unavailable due to missing native libraries",
+      textInputPlaceHolderRes = R.string.text_input_placeholder_llm_chat,
+    )
+
+  override fun initializeModelFn(
+    context: Context,
+    coroutineScope: CoroutineScope,
+    model: Model,
+    onDone: (String) -> Unit,
+  ) {
+    onDone("RAG functionality is not available. Native libraries are missing.")
+  }
+
+  override fun cleanUpModelFn(
+    context: Context,
+    coroutineScope: CoroutineScope,
+    model: Model,
+    onDone: () -> Unit,
+  ) {
+    onDone()
+  }
+
+  @Composable
+  override fun MainScreen(data: Any) {
+    Column(modifier = Modifier.padding(16.dp)) {
+      Text(
+        text = "RAG functionality is unavailable",
+        style = MaterialTheme.typography.headlineSmall,
+        modifier = Modifier.padding(bottom = 8.dp)
+      )
+      Text(
+        text = "The RAG (Retrieval Augmented Generation) feature requires native libraries that are not currently available on this device. This functionality has been disabled to prevent crashes.",
+        style = MaterialTheme.typography.bodyMedium
+      )
+    }
+  }
+}
+
 @Module
 @InstallIn(SingletonComponent::class)
 internal object LlmRagTaskModule {
   @Provides
   @IntoSet
   fun provideTask(): CustomTask {
-    return LlmRagTask()
+    // Check if RAG native libraries are available before loading the actual task class
+    return if (canLoadRagLibraries()) {
+      try {
+        LlmRagTask()
+      } catch (e: Throwable) {
+        RagStubTask()
+      }
+    } else {
+      RagStubTask()
+    }
+  }
+  
+  private fun canLoadRagLibraries(): Boolean {
+    return try {
+      // With the official Maven dependency, the libraries should be available automatically
+      // Just check if the main RAG classes can be loaded
+      Class.forName("com.google.ai.edge.localagents.rag.models.GeckoEmbeddingModel")
+      Class.forName("com.google.ai.edge.localagents.rag.memory.SqliteVectorStore")
+      true
+    } catch (e: ClassNotFoundException) {
+      Log.w("LlmRagTaskModule", "RAG classes not available: ${e.message}")
+      false
+    } catch (e: Exception) {
+      Log.e("LlmRagTaskModule", "Error checking RAG libraries: ${e.message}")
+      false
+    }
   }
 }

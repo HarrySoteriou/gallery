@@ -34,6 +34,13 @@ import dagger.hilt.components.SingletonComponent
 import dagger.multibindings.IntoSet
 import kotlinx.coroutines.CoroutineScope
 import javax.inject.Inject
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import android.util.Log
 
 class VideoAnalysisRagTask @Inject constructor() : CustomTask {
   override val task: Task =
@@ -84,12 +91,83 @@ class VideoAnalysisRagTask @Inject constructor() : CustomTask {
   }
 }
 
+class VideoAnalysisRagStubTask : CustomTask {
+  override val task: Task =
+    Task(
+      id = "video_analysis_rag",
+      label = "Video Analysis + RAG (Unavailable)",
+      category = Category.LLM,
+      icon = Icons.Default.VideoLibrary,
+      models = mutableListOf(),
+      description = "Video Analysis with RAG functionality is currently unavailable due to missing native libraries",
+      textInputPlaceHolderRes = R.string.text_input_placeholder_llm_chat,
+    )
+
+  override fun initializeModelFn(
+    context: Context,
+    coroutineScope: CoroutineScope,
+    model: Model,
+    onDone: (String) -> Unit,
+  ) {
+    onDone("Video Analysis RAG functionality is not available. Native libraries are missing.")
+  }
+
+  override fun cleanUpModelFn(
+    context: Context,
+    coroutineScope: CoroutineScope,
+    model: Model,
+    onDone: () -> Unit,
+  ) {
+    onDone()
+  }
+
+  @Composable
+  override fun MainScreen(data: Any) {
+    Column(modifier = Modifier.padding(16.dp)) {
+      Text(
+        text = "Video Analysis + RAG unavailable",
+        style = MaterialTheme.typography.headlineSmall,
+        modifier = Modifier.padding(bottom = 8.dp)
+      )
+      Text(
+        text = "The Video Analysis with RAG feature requires native libraries that are not currently available on this device. This functionality has been disabled to prevent crashes.",
+        style = MaterialTheme.typography.bodyMedium
+      )
+    }
+  }
+}
+
 @Module
 @InstallIn(SingletonComponent::class)
 internal object VideoAnalysisRagTaskModule {
   @Provides
   @IntoSet
   fun provideTask(): CustomTask {
-    return VideoAnalysisRagTask()
+    // Check if RAG native libraries are available before loading the actual task class
+    return if (canLoadRagLibraries()) {
+      try {
+        VideoAnalysisRagTask()
+      } catch (e: Throwable) {
+        VideoAnalysisRagStubTask()
+      }
+    } else {
+      VideoAnalysisRagStubTask()
+    }
+  }
+  
+  private fun canLoadRagLibraries(): Boolean {
+    return try {
+      // With the official Maven dependency, the libraries should be available automatically
+      // Just check if the main RAG classes can be loaded
+      Class.forName("com.google.ai.edge.localagents.rag.models.GeckoEmbeddingModel")
+      Class.forName("com.google.ai.edge.localagents.rag.memory.SqliteVectorStore")
+      true
+    } catch (e: ClassNotFoundException) {
+      Log.w("VideoAnalysisRagTaskModule", "RAG classes not available: ${e.message}")
+      false
+    } catch (e: Exception) {
+      Log.e("VideoAnalysisRagTaskModule", "Error checking RAG libraries: ${e.message}")
+      false
+    }
   }
 }

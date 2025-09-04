@@ -29,7 +29,7 @@ import java.util.Optional
 import com.google.ai.edge.localagents.rag.chains.ChainConfig
 import com.google.ai.edge.localagents.rag.chains.RetrievalAndInferenceChain
 import com.google.ai.edge.localagents.rag.memory.DefaultSemanticTextMemory
-import com.google.ai.edge.localagents.rag.memory.DefaultVectorStore
+import com.google.ai.edge.localagents.rag.memory.SqliteVectorStore
 import com.google.ai.edge.localagents.rag.models.AsyncProgressListener
 import com.google.ai.edge.localagents.rag.models.Embedder
 import com.google.ai.edge.localagents.rag.models.GeckoEmbeddingModel
@@ -42,17 +42,19 @@ import com.google.common.collect.ImmutableList
 import com.google.mediapipe.tasks.genai.llminference.LlmInference
 import com.google.mediapipe.tasks.genai.llminference.LlmInferenceSession
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.last
+import kotlinx.coroutines.guava.await
 
 // Real RAG SDK is now available from local source
 
 private const val TAG = "AGLlmRagModelHelper"
 
-// Default paths for embedder models (users need to push these to device)
-private const val GECKO_MODEL_PATH = "/data/local/tmp/gecko.tflite"
-private const val TOKENIZER_MODEL_PATH = "/data/local/tmp/sentencepiece.model"
+// Default paths for embedder models (using bundled assets)
+private const val GECKO_MODEL_PATH = "file:///android_asset/Gecko_1024_quant.tflite"
+private const val TOKENIZER_MODEL_PATH = "file:///android_asset/sentencepiece.model"
 
 // RAG configuration constants
-private const val USE_GPU_FOR_EMBEDDINGS = true
+private const val USE_GPU_FOR_EMBEDDINGS = false
 private const val EMBEDDING_DIMENSION = 768
 private const val QA_PROMPT_TEMPLATE = """Based on the following context, answer the question.
 
@@ -67,7 +69,7 @@ Answer:"""
 
 data class RagModelInstance(
   val llmInstance: LlmModelInstance,
-  val ragChain: RetrievalAndInferenceChain,
+  val ragChain: RetrievalAndInferenceChain?,
   val embedder: Embedder<String>?,
   val semanticMemory: com.google.ai.edge.localagents.rag.memory.SemanticMemory<String>?
 )
@@ -113,28 +115,53 @@ object LlmRagModelHelper {
               .build()
             val mediaPipeLanguageModel = MediaPipeLlmBackend(context, options, sessionOptions)
             
-            // Set up embedder (Gecko model)
-            val embedder = GeckoEmbeddingModel(
-              GECKO_MODEL_PATH,
-              Optional.of(TOKENIZER_MODEL_PATH),
-              USE_GPU_FOR_EMBEDDINGS,
-            )
+            // Set up embedder (Gecko model) - handle native library issues gracefully
+            val embedder = try {
+              GeckoEmbeddingModel(
+                GECKO_MODEL_PATH,
+                Optional.of(TOKENIZER_MODEL_PATH),
+                USE_GPU_FOR_EMBEDDINGS,
+              )
+            } catch (e: UnsatisfiedLinkError) {
+              Log.w(TAG, "Native embedding libraries not available, using fallback: ${e.message}")
+              null
+            } catch (e: Exception) {
+              Log.w(TAG, "Failed to initialize Gecko embedder, using fallback: ${e.message}")
+              null
+            }
             
-            // Create semantic memory
-            val semanticMemory = DefaultSemanticTextMemory(
-              DefaultVectorStore<String>(),
-              embedder
-            )
+            // Create semantic memory - only if embedder is available
+            val semanticMemory = if (embedder != null) {
+              try {
+                DefaultSemanticTextMemory(
+                  SqliteVectorStore(EMBEDDING_DIMENSION),
+                  embedder
+                )
+              } catch (e: Exception) {
+                Log.w(TAG, "Failed to create semantic memory, using fallback: ${e.message}")
+                null
+              }
+            } else {
+              null
+            }
             
-            // Create RAG chain configuration
-            val config = ChainConfig.create(
-              mediaPipeLanguageModel,
-              PromptBuilder(QA_PROMPT_TEMPLATE),
-              semanticMemory
-            )
-            
-            // Create retrieval and inference chain
-            val ragChain = RetrievalAndInferenceChain(config)
+            // Create RAG chain configuration - handle case where semantic memory is null
+            val ragChain = if (semanticMemory != null) {
+              try {
+                val config = ChainConfig.create(
+                  mediaPipeLanguageModel,
+                  PromptBuilder(QA_PROMPT_TEMPLATE),
+                  semanticMemory
+                )
+                RetrievalAndInferenceChain(config)
+              } catch (e: Exception) {
+                Log.w(TAG, "Failed to create RAG chain, falling back to basic LLM: ${e.message}")
+                null
+              }
+            } else {
+              Log.i(TAG, "No semantic memory available, RAG chain will be disabled")
+              null
+            }
             
             // Replace the model instance with our RAG instance
             model.instance = RagModelInstance(
@@ -180,6 +207,9 @@ object LlmRagModelHelper {
     }
   }
 
+  // Simple in-memory document store as fallback when native RAG is not available
+  private val documentStore = mutableMapOf<String, List<String>>()
+  
   suspend fun memorizeChunks(
     model: Model,
     chunks: List<String>
@@ -193,22 +223,26 @@ object LlmRagModelHelper {
       val semanticMemory = ragInstance.semanticMemory
       
       if (semanticMemory != null) {
-        // Use coroutines to await the ListenableFuture
-        val future = semanticMemory.recordBatchedMemoryItems(ImmutableList.copyOf(chunks))
-        val result = async(Dispatchers.IO) { future.get() }
-        result.await()
-      } else {
-        // Fallback to individual memorization using recordMemoryItem
-        for (chunk in chunks) {
-          // Use coroutines to await the ListenableFuture
-          val future = semanticMemory?.recordMemoryItem(chunk)
-          val result = async(Dispatchers.IO) { future?.get() }
-          result.await()
+        try {
+          // Use coroutines to await the ListenableFuture - following official example pattern
+          semanticMemory.recordBatchedMemoryItems(ImmutableList.copyOf(chunks)).await()
+          Log.d(TAG, "Successfully memorized ${chunks.size} chunks using semantic memory")
+          ""
+        } catch (e: Exception) {
+          Log.w(TAG, "Semantic memory failed, using fallback: ${e.message}")
+          // Fallback to simple in-memory storage
+          val documentId = "doc_${System.currentTimeMillis()}"
+          documentStore[documentId] = chunks
+          Log.d(TAG, "Successfully memorized ${chunks.size} chunks using fallback storage")
+          ""
         }
+      } else {
+        // Fallback to simple in-memory storage
+        val documentId = "doc_${System.currentTimeMillis()}"
+        documentStore[documentId] = chunks
+        Log.d(TAG, "Successfully memorized ${chunks.size} chunks using fallback storage")
+        ""
       }
-      
-      Log.d(TAG, "Successfully memorized ${chunks.size} chunks")
-      ""
     } catch (e: Exception) {
       val error = "Failed to memorize chunks: ${e.message}"
       Log.e(TAG, error)
@@ -224,25 +258,90 @@ object LlmRagModelHelper {
     try {
       val ragInstance = model.instance as RagModelInstance
       
-      val retrievalRequest = RetrievalRequest.create(
-        prompt,
-        RetrievalConfig.create(2, 0.0f, RetrievalConfig.TaskType.QUESTION_ANSWERING)
-      )
-      
-      // Use coroutines to await the ListenableFuture
-      val future = ragInstance.ragChain.invoke(retrievalRequest, callback)
-      val result = async(Dispatchers.IO) { future.get() }
-      result.await().text
+      if (ragInstance.ragChain != null) {
+        try {
+          val retrievalRequest = RetrievalRequest.create(
+            prompt,
+            RetrievalConfig.create(2, 0.0f, RetrievalConfig.TaskType.QUESTION_ANSWERING)
+          )
+          
+          // Use coroutines to await the ListenableFuture - following official example pattern
+          ragInstance.ragChain.invoke(retrievalRequest, callback).await().text
+        } catch (e: Exception) {
+          Log.w(TAG, "RAG chain failed, using fallback: ${e.message}")
+          // Fall through to fallback implementation
+          generateWithFallbackRAG(model, prompt, ragInstance)
+        }
+      } else {
+        // Use fallback RAG implementation
+        generateWithFallbackRAG(model, prompt, ragInstance)
+      }
     } catch (e: Exception) {
       val error = "Failed to generate response: ${e.message}"
       Log.e(TAG, error)
       error
     }
   }
+  
+  private suspend fun generateWithFallbackRAG(
+    model: Model,
+    prompt: String, 
+    ragInstance: RagModelInstance
+  ): String {
+    Log.i(TAG, "Using fallback RAG implementation")
+    
+    // Simple keyword-based retrieval from stored documents
+    val relevantChunks = retrieveRelevantChunks(prompt, maxChunks = 3)
+    
+    val enhancedPrompt = if (relevantChunks.isNotEmpty()) {
+      """Based on the following context information, please answer the question:
+
+Context:
+${relevantChunks.joinToString("\n\n")}
+
+Question: $prompt
+
+Answer:"""
+    } else {
+      prompt
+    }
+    
+    // Generate response using the enhanced prompt with context
+    return LlmChatModelHelper.generateResponseFlow(
+      Model(name = model.name).apply { instance = ragInstance.llmInstance },
+      enhancedPrompt
+    ).last()
+  }
+  
+  private fun retrieveRelevantChunks(query: String, maxChunks: Int = 3): List<String> {
+    if (documentStore.isEmpty()) return emptyList()
+    
+    val queryWords = query.lowercase().split("\\s+".toRegex()).filter { it.length > 2 }
+    val relevantChunks = mutableListOf<Pair<String, Int>>()
+    
+    // Simple keyword-based scoring
+    documentStore.values.flatten().forEach { chunk ->
+      val chunkLower = chunk.lowercase()
+      val score = queryWords.count { word -> chunkLower.contains(word) }
+      if (score > 0) {
+        relevantChunks.add(Pair(chunk, score))
+      }
+    }
+    
+    // Return top chunks by relevance score
+    return relevantChunks
+      .sortedByDescending { it.second }
+      .take(maxChunks)
+      .map { it.first }
+  }
 
   fun clearContext(model: Model) {
     try {
       val ragInstance = model.instance as RagModelInstance
+      // Clear fallback document store
+      documentStore.clear()
+      Log.d(TAG, "Cleared document store")
+      
       // Reset the underlying LLM session
       LlmChatModelHelper.resetSession(
         model = Model(name = model.name).apply { instance = ragInstance.llmInstance },
@@ -252,5 +351,12 @@ object LlmRagModelHelper {
     } catch (e: Exception) {
       Log.e(TAG, "Failed to clear RAG context: ${e.message}")
     }
+  }
+  
+  fun getDocumentCount(): Int = documentStore.values.sumOf { it.size }
+  
+  fun clearDocuments() {
+    documentStore.clear()
+    Log.d(TAG, "Manually cleared all documents from store")
   }
 }

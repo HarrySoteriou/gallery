@@ -39,6 +39,9 @@ class MainActivity : ComponentActivity() {
 
     installSplashScreen()
 
+    // Initialize theme after Hilt injection is complete
+    (application as GalleryApplication).initializeTheme()
+
     enableEdgeToEdge()
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
       // Fix for three-button nav not properly going edge-to-edge.

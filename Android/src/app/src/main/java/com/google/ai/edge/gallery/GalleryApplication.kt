@@ -31,9 +31,15 @@ class GalleryApplication : Application() {
   override fun onCreate() {
     super.onCreate()
 
-    // Load saved theme.
-    ThemeSettings.themeOverride.value = dataStoreRepository.readTheme()
-
     FirebaseApp.initializeApp(this)
+    
+    // Load saved theme after Hilt injection is complete
+    // This will be called when the first activity is created
+    // and Hilt dependencies are available
+  }
+  
+  fun initializeTheme() {
+    // Load saved theme - this should be called from MainActivity after injection
+    ThemeSettings.themeOverride.value = dataStoreRepository.readTheme()
   }
 }

@@ -17,7 +17,7 @@
         "maxTokens": 4096,
         "accelerators": "cpu,gpu"
       },
-      "taskTypes": ["llm_chat", "llm_prompt_lab", "llm_ask_image", "llm_ask_audio", "llm_video_analysis"],
+      "taskTypes": ["llm_chat", "llm_prompt_lab", "llm_ask_image", "llm_ask_audio", "llm_video_analysis", "llm_rag"],
       "bestForTaskTypes": ["llm_ask_image", "llm_ask_audio"]
     },
     {
@@ -37,7 +37,7 @@
         "maxTokens": 4096,
         "accelerators": "cpu,gpu"
       },
-      "taskTypes": ["llm_chat", "llm_prompt_lab", "llm_ask_image", "llm_ask_audio", "llm_video_analysis"]
+      "taskTypes": ["llm_chat", "llm_prompt_lab", "llm_ask_image", "llm_ask_audio", "llm_video_analysis", "llm_rag"]
     },
     {
       "name": "Gemma3-1B-IT",
@@ -54,8 +54,28 @@
         "maxTokens": 1024,
         "accelerators": "gpu,cpu"
       },
-      "taskTypes": ["llm_chat", "llm_prompt_lab"],
+      "taskTypes": ["llm_chat", "llm_prompt_lab", "llm_rag"],
       "bestForTaskTypes": ["llm_chat", "llm_prompt_lab"]
+    },
+    {
+      "name": "Gecko-1024-Embedding",
+      "modelId": "gecko/gecko-1024-embedding",
+      "modelFile": "Gecko_1024_quant.tflite",
+      "description": "Gecko text embedding model for RAG (Retrieval Augmented Generation) applications. Converts text into 1024-dimensional vector embeddings for semantic search and document retrieval.",
+      "sizeInBytes": 145598464,
+      "minDeviceMemoryInGb": 4,
+      "commitHash": "",
+      "llmSupportImage": false,
+      "llmSupportAudio": false,
+      "defaultConfig": {
+        "topK": 1,
+        "topP": 1.0,
+        "temperature": 0.0,
+        "maxTokens": 512,
+        "accelerators": "cpu,gpu"
+      },
+      "taskTypes": ["llm_rag", "video_analysis_rag"],
+      "bestForTaskTypes": ["llm_rag", "video_analysis_rag"]
     }
   ]
 }

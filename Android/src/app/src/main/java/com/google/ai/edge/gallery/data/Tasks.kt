@@ -116,6 +116,7 @@ private val allBuiltInTaskIds: Set<String> =
     BuiltInTaskId.LLM_ASK_IMAGE,
     BuiltInTaskId.LLM_ASK_AUDIO,
     BuiltInTaskId.VIDEO_ANALYSIS,
+    BuiltInTaskId.LLM_RAG,
   )
 
 /**

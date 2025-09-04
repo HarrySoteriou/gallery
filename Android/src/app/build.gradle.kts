@@ -88,12 +88,10 @@ dependencies {
   implementation(libs.mediapipe.tasks.text)
   implementation(libs.mediapipe.tasks.genai)
   implementation(libs.mediapipe.tasks.imagegen)
-  // RAG SDK dependencies - now using source code integration
+  // RAG SDK dependencies - using official Maven artifact
+  implementation("com.google.ai.edge.localagents:localagents-rag:0.1.0")
   implementation("com.google.guava:guava:33.3.1-android")
   implementation("org.jetbrains.kotlinx:kotlinx-coroutines-guava:1.9.0")
-  implementation("com.google.auto.value:auto-value-annotations:1.10.4")
-  kapt("com.google.auto.value:auto-value:1.10.4")
-  implementation("com.squareup.okhttp3:okhttp:4.12.0")
   implementation(libs.commonmark)
   implementation(libs.richtext)
   implementation(libs.tflite)
