@@ -44,6 +44,8 @@ import com.google.mediapipe.tasks.genai.llminference.LlmInferenceSession
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.last
 import kotlinx.coroutines.guava.await
+import kotlin.coroutines.suspendCoroutine
+import kotlin.coroutines.resume
 
 // Real RAG SDK is now available from local source
 
@@ -307,10 +309,22 @@ Answer:"""
     }
     
     // Generate response using the enhanced prompt with context
-    return LlmChatModelHelper.generateResponseFlow(
-      Model(name = model.name).apply { instance = ragInstance.llmInstance },
-      enhancedPrompt
-    ).last()
+    return suspendCoroutine { continuation ->
+      val resultBuilder = StringBuilder()
+      val tempModel = Model(name = model.name).apply { instance = ragInstance.llmInstance }
+      
+      LlmChatModelHelper.runInference(
+        model = tempModel,
+        input = enhancedPrompt,
+        resultListener = { partialResult, done ->
+          resultBuilder.append(partialResult)
+          if (done) {
+            continuation.resume(resultBuilder.toString())
+          }
+        },
+        cleanUpListener = { /* No cleanup needed for this temporary call */ }
+      )
+    }
   }
   
   private fun retrieveRelevantChunks(query: String, maxChunks: Int = 3): List<String> {
