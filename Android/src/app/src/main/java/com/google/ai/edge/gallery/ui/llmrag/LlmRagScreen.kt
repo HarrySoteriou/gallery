@@ -16,6 +16,7 @@
 
 package com.google.ai.edge.gallery.ui.llmrag
 
+import android.util.Log
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.*
@@ -47,8 +48,47 @@ fun LlmRagScreen(
   val context = LocalContext.current
   val coroutineScope = rememberCoroutineScope()
   
+  // Trigger model allowlist loading - this ensures models are loaded before accessing them
+  LaunchedEffect(Unit) {
+    modelManagerViewModel.loadModelAllowlistWhenNeeded()
+  }
+  
   val uiState by modelManagerViewModel.uiState.collectAsStateWithLifecycle()
   val selectedModel = uiState.selectedModel
+  var previousModel by remember { mutableStateOf<com.google.ai.edge.gallery.data.Model?>(null) }
+  
+  // Handle model selection changes - cleanup previous model and initialize new one
+  LaunchedEffect(selectedModel) {
+    if (previousModel != null && selectedModel != previousModel) {
+      Log.d("LlmRagScreen", "Cleaning up previous RAG model: ${previousModel?.name}")
+      val task = modelManagerViewModel.getTaskById(com.google.ai.edge.gallery.data.BuiltInTaskId.LLM_RAG)!!
+      previousModel?.let { model ->
+        LlmRagModelHelper.cleanUp(model) {
+          Log.d("LlmRagScreen", "Previous RAG model cleaned up")
+        }
+      }
+    }
+    previousModel = selectedModel
+  }
+  
+  // Initialize RAG model when model/download state changes - matches ChatView pattern
+  val curDownloadStatus = uiState.modelDownloadStatus[selectedModel?.name]
+  LaunchedEffect(curDownloadStatus, selectedModel?.name) {
+    if (selectedModel != null && curDownloadStatus?.status == com.google.ai.edge.gallery.data.ModelDownloadStatusType.SUCCEEDED) {
+      Log.d("LlmRagScreen", "Initializing RAG model '${selectedModel.name}' with Gecko and SentencePiece")
+      LlmRagModelHelper.initialize(
+        context = context,
+        model = selectedModel,
+        onDone = { error ->
+          if (error.isNotEmpty()) {
+            Log.e("LlmRagScreen", "Failed to initialize RAG model: $error")
+          } else {
+            Log.d("LlmRagScreen", "RAG model successfully initialized with Gecko embeddings")
+          }
+        }
+      )
+    }
+  }
   
   // Sample context text for demonstration
   val sampleContext = """

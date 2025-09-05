@@ -467,6 +467,7 @@ constructor(
             BuiltInTaskId.LLM_ASK_AUDIO,
             BuiltInTaskId.LLM_PROMPT_LAB,
             BuiltInTaskId.VIDEO_ANALYSIS,
+            BuiltInTaskId.LLM_RAG,
           )
       )) {
       // Remove duplicated imported model if existed.
@@ -882,6 +883,7 @@ constructor(
       // Add to task.
       tasks.get(key = BuiltInTaskId.LLM_CHAT)?.models?.add(model)
       tasks.get(key = BuiltInTaskId.LLM_PROMPT_LAB)?.models?.add(model)
+      tasks.get(key = BuiltInTaskId.LLM_RAG)?.models?.add(model)
       if (model.llmSupportImage) {
         tasks.get(key = BuiltInTaskId.LLM_ASK_IMAGE)?.models?.add(model)
         tasks.get(key = BuiltInTaskId.VIDEO_ANALYSIS)?.models?.add(model)
