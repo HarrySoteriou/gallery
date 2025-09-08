@@ -107,6 +107,8 @@ object BuiltInTaskId {
   const val LLM_ASK_AUDIO = "llm_ask_audio"
   const val VIDEO_ANALYSIS = "llm_video_analysis"
   const val LLM_RAG = "llm_rag"
+  const val VIDEO_RAG_ANALYSIS = "llm_video_analysis_rag"
+
 }
 
 private val allBuiltInTaskIds: Set<String> =
@@ -117,6 +119,7 @@ private val allBuiltInTaskIds: Set<String> =
     BuiltInTaskId.LLM_ASK_AUDIO,
     BuiltInTaskId.VIDEO_ANALYSIS,
     BuiltInTaskId.LLM_RAG,
+    BuiltInTaskId.VIDEO_RAG_ANALYSIS
   )
 
 /**
@@ -125,7 +128,8 @@ private val allBuiltInTaskIds: Set<String> =
 object TaskCapabilities {
   private val imageSupportedTasks = setOf(
     BuiltInTaskId.LLM_ASK_IMAGE,
-    BuiltInTaskId.VIDEO_ANALYSIS
+    BuiltInTaskId.VIDEO_ANALYSIS,
+    BuiltInTaskId.VIDEO_RAG_ANALYSIS
   )
   
   private val audioSupportedTasks = setOf(

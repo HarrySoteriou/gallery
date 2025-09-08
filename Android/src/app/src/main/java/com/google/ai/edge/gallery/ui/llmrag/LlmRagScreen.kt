@@ -17,11 +17,14 @@
 package com.google.ai.edge.gallery.ui.llmrag
 
 import android.util.Log
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Upload
+import androidx.compose.material.icons.filled.FileOpen
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -30,11 +33,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewModelScope
 import com.google.ai.edge.gallery.data.BuiltInTaskId
 import com.google.ai.edge.gallery.ui.common.chat.ChatPanel
+import com.google.ai.edge.gallery.ui.common.chat.ChatView
 import com.google.ai.edge.gallery.ui.common.chat.ChatMessageText
 import com.google.ai.edge.gallery.ui.modelmanager.ModelManagerViewModel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers  
+import kotlinx.coroutines.withContext
 import java.io.BufferedReader
 import java.io.InputStreamReader
 
@@ -72,8 +79,8 @@ fun LlmRagScreen(
   }
   
   // Initialize RAG model when model/download state changes - matches ChatView pattern
-  val curDownloadStatus = uiState.modelDownloadStatus[selectedModel?.name]
-  LaunchedEffect(curDownloadStatus, selectedModel?.name) {
+  val curDownloadStatus = uiState.modelDownloadStatus[selectedModel.name]
+  LaunchedEffect(curDownloadStatus, selectedModel.name) {
     if (selectedModel != null && curDownloadStatus?.status == com.google.ai.edge.gallery.data.ModelDownloadStatusType.SUCCEEDED) {
       Log.d("LlmRagScreen", "Initializing RAG model '${selectedModel.name}' with Gecko and SentencePiece")
       LlmRagModelHelper.initialize(
@@ -111,83 +118,148 @@ fun LlmRagScreen(
   """.trimIndent()
 
   var showSampleDialog by remember { mutableStateOf(false) }
+  var isProcessingDocument by remember { mutableStateOf(false) }
 
-  Column(modifier = modifier.fillMaxSize()) {
-    // Header with memorization controls
-    Card(
-      modifier = Modifier
-        .fillMaxWidth()
-        .padding(16.dp),
-      elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
-    ) {
-      Column(
-        modifier = Modifier.padding(16.dp)
-      ) {
-        Text(
-          text = "RAG Knowledge Base",
-          style = MaterialTheme.typography.titleMedium,
-          fontWeight = FontWeight.Bold
-        )
-        
-        Spacer(modifier = Modifier.height(8.dp))
-        
-        Text(
-          text = "Add context documents to enhance the model's knowledge for more accurate responses.",
-          style = MaterialTheme.typography.bodyMedium,
-          color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        
-        Spacer(modifier = Modifier.height(12.dp))
-        
-        Row(
-          modifier = Modifier.fillMaxWidth(),
-          horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-          Button(
-            onClick = { showSampleDialog = true },
-            modifier = Modifier.weight(1f)
-          ) {
-            Icon(Icons.Default.Upload, contentDescription = null)
-            Spacer(modifier = Modifier.width(4.dp))
-            Text("Add Sample Context")
-          }
+  // File picker launcher
+  val documentPickerLauncher = rememberLauncherForActivityResult(
+    contract = ActivityResultContracts.GetContent()
+  ) { uri ->
+    uri?.let {
+      isProcessingDocument = true
+      coroutineScope.launch {
+        try {
+          val content = context.contentResolver.openInputStream(uri)?.use { inputStream ->
+            BufferedReader(InputStreamReader(inputStream, "UTF-8")).use { reader ->
+              reader.readText()
+            }
+          } ?: ""
           
-          OutlinedButton(
-            onClick = {
-              viewModel.clearAllRagMessages(selectedModel)
-            },
-            modifier = Modifier.weight(1f)
+          if (content.isNotBlank()) {
+            selectedModel?.let { model ->
+              viewModel.memorizeText(model, content)
+            }
+          }
+        } catch (e: Exception) {
+          Log.e("LlmRagScreen", "Failed to read document: ${e.message}")
+          // You could show an error dialog here if needed
+        } finally {
+          isProcessingDocument = false
+        }
+      }
+    }
+  }
+
+  // Only show the header controls when no model is selected or when the model is not ready
+  val modelDownloadStatus = uiState.modelDownloadStatus[selectedModel?.name]
+  val showHeaderControls = selectedModel == null || modelDownloadStatus?.status != com.google.ai.edge.gallery.data.ModelDownloadStatusType.SUCCEEDED
+  
+  Column(modifier = modifier.fillMaxSize()) {
+    // Header with memorization controls - only show when model is not ready
+    if (showHeaderControls) {
+      Card(
+        modifier = Modifier
+          .fillMaxWidth()
+          .padding(16.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+      ) {
+        Column(
+          modifier = Modifier.padding(16.dp)
+        ) {
+          Text(
+            text = "RAG Knowledge Base",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold
+          )
+          
+          Spacer(modifier = Modifier.height(8.dp))
+          
+          Text(
+            text = "Add context documents to enhance the model's knowledge for more accurate responses.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+          )
+          
+          Spacer(modifier = Modifier.height(12.dp))
+          
+          Column(
+            verticalArrangement = Arrangement.spacedBy(8.dp)
           ) {
-            Text("Clear Memory")
+            Row(
+              modifier = Modifier.fillMaxWidth(),
+              horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+              Button(
+                onClick = {
+                  documentPickerLauncher.launch("text/*")
+                },
+                enabled = !isProcessingDocument && selectedModel != null,
+                modifier = Modifier.weight(1f)
+              ) {
+                if (isProcessingDocument) {
+                  CircularProgressIndicator(
+                    modifier = Modifier.size(16.dp),
+                    strokeWidth = 2.dp
+                  )
+                  Spacer(modifier = Modifier.width(4.dp))
+                  Text("Processing...")
+                } else {
+                  Icon(Icons.Default.FileOpen, contentDescription = null)
+                  Spacer(modifier = Modifier.width(4.dp))
+                  Text("Upload Document")
+                }
+              }
+              
+              Button(
+                onClick = { showSampleDialog = true },
+                enabled = !isProcessingDocument && selectedModel != null,
+                modifier = Modifier.weight(1f)
+              ) {
+                Icon(Icons.Default.Upload, contentDescription = null)
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("Add Sample")
+              }
+            }
+            
+            OutlinedButton(
+              onClick = {
+                selectedModel?.let { viewModel.clearAllRagMessages(it) }
+              },
+              enabled = selectedModel != null,
+              modifier = Modifier.fillMaxWidth()
+            ) {
+              Text("Clear Memory")
+            }
           }
         }
       }
     }
 
-    // Get the task and chat panel
+    // Get the task and use ChatView for proper background transitions
     val task = modelManagerViewModel.getTaskById(BuiltInTaskId.LLM_RAG)!!
     
-    ChatPanel(
-      task = task,
-      selectedModel = selectedModel,
-      modelManagerViewModel = modelManagerViewModel,
-      viewModel = viewModel,
-      navigateUp = navigateUp,
-      onSendMessage = { model, messages ->
-        // Convert messages to content and send through viewModel
-        for (message in messages) {
-          viewModel.addMessage(model, message)
-        }
-        val textMessages = messages.filterIsInstance<ChatMessageText>()
-        if (textMessages.isNotEmpty()) {
-          val content = textMessages.map { it.content }
-          viewModel.sendMessage(model, content)
-        }
-      },
-      onRunAgainClicked = { _, _ -> },
-      onBenchmarkClicked = { _, _, _, _ -> },
-      modifier = Modifier.weight(1f)
-    )
+    // Only show the ChatView if we have a selected model
+    selectedModel?.let { model ->
+      ChatView(
+        task = task,
+        viewModel = viewModel,
+        modelManagerViewModel = modelManagerViewModel,
+        navigateUp = navigateUp,
+        onSendMessage = { selectedModel, messages ->
+          // Convert messages to content and send through viewModel
+          for (message in messages) {
+            viewModel.addMessage(selectedModel, message)
+          }
+          val textMessages = messages.filterIsInstance<ChatMessageText>()
+          if (textMessages.isNotEmpty()) {
+            val content = textMessages.map { it.content }
+            viewModel.sendMessage(selectedModel, content)
+          }
+        },
+        onRunAgainClicked = { _, _ -> },
+        onBenchmarkClicked = { _, _, _, _ -> },
+        modifier = Modifier.weight(1f)
+      )
+    }
   }
 
   // Sample context dialog
@@ -250,5 +322,80 @@ fun LlmRagViewModel.memorizeVideoDescriptions(
 ) {
   selectedModel?.let { model ->
     memorizeImageDescriptions(model, descriptions)
+  }
+}
+
+/**
+ * Extension function for video RAG analysis that sends a message and automatically 
+ * memorizes the response for future queries
+ */
+fun LlmRagViewModel.sendVideoAnalysisMessage(
+  model: com.google.ai.edge.gallery.data.Model,
+  content: List<String>,
+  batchNumber: Int
+) {
+  val textContent = content.joinToString(" ")
+  if (textContent.isBlank()) return
+
+  this.viewModelScope.launch {
+    val userMessage = ChatMessageText(content = textContent, side = com.google.ai.edge.gallery.ui.common.chat.ChatSide.USER)
+    addMessage(model, userMessage)
+
+    try {
+      val assistantMessage = com.google.ai.edge.gallery.ui.common.chat.ChatMessageLoading()
+      addMessage(model, assistantMessage)
+
+      val progressListener = object : com.google.ai.edge.localagents.rag.models.AsyncProgressListener<com.google.ai.edge.localagents.rag.models.LanguageModelResponse> {
+        override fun run(partialResult: com.google.ai.edge.localagents.rag.models.LanguageModelResponse, done: Boolean) {
+          updateLastAssistantMessage(model, partialResult.text)
+          
+          // When analysis is complete, automatically memorize the result
+          if (done && partialResult.text.isNotBlank()) {
+            val batchDescription = """
+              Video Batch #$batchNumber Analysis:
+              Timestamp: ${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())}
+              
+              ${partialResult.text}
+              
+              [This is a video analysis result stored for cross-batch querying]
+            """.trimIndent()
+            
+            // Store in RAG memory asynchronously
+            this@sendVideoAnalysisMessage.viewModelScope.launch(Dispatchers.Default) {
+              try {
+                val error = LlmRagModelHelper.memorizeChunks(model, listOf(batchDescription))
+                if (error.isEmpty()) {
+                  android.util.Log.d("VideoRAGAnalysis", "Successfully stored batch #$batchNumber in RAG memory")
+                } else {
+                  android.util.Log.e("VideoRAGAnalysis", "Failed to store batch in RAG: $error")
+                }
+              } catch (e: Exception) {
+                android.util.Log.e("VideoRAGAnalysis", "Error storing batch in RAG: ${e.message}")
+              }
+            }
+          }
+        }
+      }
+
+      val response = withContext(kotlinx.coroutines.Dispatchers.Default) {
+        LlmRagModelHelper.generateResponse(model, textContent, progressListener)
+      }
+
+      // Final update with complete response (already handled in progressListener)
+      // The memorization also happens in the progress listener when done=true
+
+    } catch (e: Exception) {
+      android.util.Log.e("LlmRagViewModel", "Failed to send video analysis message: ${e.message}")
+      updateLastAssistantMessage(model, "Error: ${e.message}")
+    }
+  }
+}
+
+private fun LlmRagViewModel.updateLastAssistantMessage(model: com.google.ai.edge.gallery.data.Model, text: String) {
+  val lastMessage = getLastMessage(model)
+  if (lastMessage != null && lastMessage.side == com.google.ai.edge.gallery.ui.common.chat.ChatSide.AGENT) {
+    removeLastMessage(model)
+    val updatedMessage = ChatMessageText(content = text, side = com.google.ai.edge.gallery.ui.common.chat.ChatSide.AGENT)
+    addMessage(model, updatedMessage)
   }
 }

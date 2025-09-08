@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package com.google.ai.edge.gallery.ui.videoanalysis
+package com.google.ai.edge.gallery.ui.videoRAGanalysis
 
 import android.graphics.Bitmap
 import android.util.Log

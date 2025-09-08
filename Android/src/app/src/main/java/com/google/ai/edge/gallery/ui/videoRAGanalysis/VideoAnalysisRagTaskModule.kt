@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package com.google.ai.edge.gallery.ui.videoanalysis
+package com.google.ai.edge.gallery.ui.videoRAGanalysis
 
 import android.content.Context
 import androidx.compose.material.icons.Icons
@@ -45,7 +45,7 @@ import android.util.Log
 class VideoAnalysisRagTask @Inject constructor() : CustomTask {
   override val task: Task =
     Task(
-      id = "video_analysis_rag",
+      id = "llm_video_analysis_rag",
       label = "Video Analysis + RAG",
       category = Category.LLM,
       icon = Icons.Default.VideoLibrary,
@@ -53,7 +53,7 @@ class VideoAnalysisRagTask @Inject constructor() : CustomTask {
       description = "Advanced video analysis that captures frame descriptions in RAG memory, enabling queries across longer video sequences and building a searchable video knowledge base",
       docUrl = "https://ai.google.dev/edge/mediapipe/solutions/genai/rag/android",
       sourceCodeUrl =
-        "https://github.com/google-ai-edge/gallery/blob/main/Android/src/app/src/main/java/com/google/ai/edge/gallery/ui/videoanalysis/VideoAnalysisRagIntegration.kt",
+        "https://github.com/google-ai-edge/gallery/blob/main/Android/src/app/src/main/java/com/google/ai/edge/gallery/ui/videoRAGanalysis/VideoAnalysisRagIntegration.kt",
       textInputPlaceHolderRes = R.string.text_input_placeholder_llm_chat,
     )
 
@@ -94,7 +94,7 @@ class VideoAnalysisRagTask @Inject constructor() : CustomTask {
 class VideoAnalysisRagStubTask : CustomTask {
   override val task: Task =
     Task(
-      id = "video_analysis_rag",
+      id = "llm_video_analysis_rag",
       label = "Video Analysis + RAG (Unavailable)",
       category = Category.LLM,
       icon = Icons.Default.VideoLibrary,
