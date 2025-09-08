@@ -19,6 +19,12 @@ package com.google.ai.edge.gallery.ui.llmrag
 import android.content.Context
 import android.util.Log
 import com.google.ai.edge.gallery.data.Model
+import com.google.ai.edge.gallery.data.Accelerator
+import com.google.ai.edge.gallery.data.ConfigKeys
+import com.google.ai.edge.gallery.data.DEFAULT_MAX_TOKEN
+import com.google.ai.edge.gallery.data.DEFAULT_TEMPERATURE
+import com.google.ai.edge.gallery.data.DEFAULT_TOPK
+import com.google.ai.edge.gallery.data.DEFAULT_TOPP
 import com.google.ai.edge.gallery.ui.llmchat.LlmChatModelHelper
 import com.google.ai.edge.gallery.ui.llmchat.LlmModelInstance
 import kotlinx.coroutines.CoroutineScope
@@ -51,9 +57,11 @@ import kotlin.coroutines.resume
 
 private const val TAG = "AGLlmRagModelHelper"
 
-// Default paths for embedder models (using bundled assets)
-private const val GECKO_MODEL_PATH = "file:///android_asset/Gecko_1024_quant.tflite"
-private const val TOKENIZER_MODEL_PATH = "file:///android_asset/sentencepiece.model"
+// Embedding model paths (separate from the main LLM model)
+// These are for the Gecko embedding model used for semantic search, NOT the Gemma3-1T-IT LLM
+// Note: These will be dynamically resolved to the app's external files directory
+private const val GECKO_EMBEDDING_MODEL_FILENAME = "Gecko_1024_quant.tflite"
+private const val GECKO_TOKENIZER_FILENAME = "sentencepiece.model"
 
 // RAG configuration constants
 private const val USE_GPU_FOR_EMBEDDINGS = false
@@ -99,29 +107,63 @@ object LlmRagModelHelper {
           }
           
           try {
-            // Get the LLM instance
+            // Get the already-initialized LLM instance (Gemma3-1T-IT)
             val llmInstance = model.instance as LlmModelInstance
             
             // Create MediaPipe language model wrapper for RAG
-            // Note: MediaPipeLlmBackend constructor requires specific options
-            // We need to create new options instead of using llmInstance properties that don't exist
-            val options = LlmInference.LlmInferenceOptions.builder()
-              .setModelPath(model.getPath(context))
-              .setMaxTokens(128)
-              .setPreferredBackend(LlmInference.Backend.GPU)
-              .build()
-            val sessionOptions = LlmInferenceSession.LlmInferenceSessionOptions.builder()
-              .setTopK(40)
-              .setTopP(0.95f)
-              .setTemperature(0.8f)
-              .build()
-            val mediaPipeLanguageModel = MediaPipeLlmBackend(context, options, sessionOptions)
+            // Note: We need to create options for the RAG backend, but we'll use the model's configuration
+            val maxTokens = model.getIntConfigValue(key = ConfigKeys.MAX_TOKENS, defaultValue = DEFAULT_MAX_TOKEN)
+            val topK = model.getIntConfigValue(key = ConfigKeys.TOPK, defaultValue = DEFAULT_TOPK)
+            val topP = model.getFloatConfigValue(key = ConfigKeys.TOPP, defaultValue = DEFAULT_TOPP)
+            val temperature = model.getFloatConfigValue(key = ConfigKeys.TEMPERATURE, defaultValue = DEFAULT_TEMPERATURE)
+            val accelerator = model.getStringConfigValue(key = ConfigKeys.ACCELERATOR, defaultValue = Accelerator.GPU.label)
             
-            // Set up embedder (Gecko model) - handle native library issues gracefully
+            val preferredBackend = when (accelerator) {
+              Accelerator.CPU.label -> LlmInference.Backend.CPU
+              Accelerator.GPU.label -> LlmInference.Backend.GPU
+              else -> LlmInference.Backend.GPU
+            }
+            
+            // Create options for the RAG MediaPipe backend using the model's configuration
+            val ragLlmOptions = LlmInference.LlmInferenceOptions.builder()
+              .setModelPath(model.getPath(context))
+              .setMaxTokens(maxTokens)
+              .setPreferredBackend(preferredBackend)
+              .build()
+            val ragSessionOptions = LlmInferenceSession.LlmInferenceSessionOptions.builder()
+              .setTopK(topK)
+              .setTopP(topP)
+              .setTemperature(temperature)
+              .build()
+            val mediaPipeLanguageModel = MediaPipeLlmBackend(context, ragLlmOptions, ragSessionOptions)
+            
+            // Set up embedder (Gecko embedding model - separate from Gemma3-1T-IT LLM)
             val embedder = try {
+              // Construct full paths using the app's external files directory
+              val externalFilesDir = context.getExternalFilesDir(null)
+              val geckoModelPath = "${externalFilesDir?.absolutePath}/$GECKO_EMBEDDING_MODEL_FILENAME"
+              val tokenizerPath = "${externalFilesDir?.absolutePath}/$GECKO_TOKENIZER_FILENAME"
+              
+              Log.d(TAG, "Looking for Gecko model at: $geckoModelPath")
+              Log.d(TAG, "Looking for tokenizer at: $tokenizerPath")
+              
+              // Check if files exist before attempting to load
+              val geckoFile = java.io.File(geckoModelPath)
+              val tokenizerFile = java.io.File(tokenizerPath)
+              
+              Log.d(TAG, "Gecko model file exists: ${geckoFile.exists()}")
+              Log.d(TAG, "Tokenizer file exists: ${tokenizerFile.exists()}")
+              
+              if (!geckoFile.exists()) {
+                throw java.io.FileNotFoundException("Gecko model file not found at: $geckoModelPath")
+              }
+              if (!tokenizerFile.exists()) {
+                throw java.io.FileNotFoundException("Tokenizer file not found at: $tokenizerPath")
+              }
+              
               GeckoEmbeddingModel(
-                GECKO_MODEL_PATH,
-                Optional.of(TOKENIZER_MODEL_PATH),
+                geckoModelPath,
+                Optional.of(tokenizerPath),
                 USE_GPU_FOR_EMBEDDINGS,
               )
             } catch (e: UnsatisfiedLinkError) {

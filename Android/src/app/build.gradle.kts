@@ -89,9 +89,9 @@ dependencies {
   implementation(libs.mediapipe.tasks.genai)
   implementation(libs.mediapipe.tasks.imagegen)
   // RAG SDK dependencies - using official Maven artifact
-  implementation("com.google.ai.edge.localagents:localagents-rag:0.1.0")
+  implementation("com.google.ai.edge.localagents:localagents-rag:0.3.0")
   implementation("com.google.guava:guava:33.3.1-android")
-  implementation("org.jetbrains.kotlinx:kotlinx-coroutines-guava:1.9.0")
+  implementation("org.jetbrains.kotlinx:kotlinx-coroutines-guava:1.10.2")
   implementation(libs.commonmark)
   implementation(libs.richtext)
   implementation(libs.tflite)
