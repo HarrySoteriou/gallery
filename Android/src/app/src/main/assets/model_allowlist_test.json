@@ -17,7 +17,7 @@
         "maxTokens": 4096,
         "accelerators": "cpu,gpu"
       },
-      "taskTypes": ["llm_chat", "llm_prompt_lab", "llm_ask_image", "llm_ask_audio", "llm_video_analysis"],
+      "taskTypes": ["llm_chat", "llm_prompt_lab", "llm_ask_image", "llm_ask_audio", "llm_video_analysis", "llm_rag"],
       "bestForTaskTypes": ["llm_ask_image", "llm_ask_audio"]
     },
     {
@@ -37,7 +37,7 @@
         "maxTokens": 4096,
         "accelerators": "cpu,gpu"
       },
-      "taskTypes": ["llm_chat", "llm_prompt_lab", "llm_ask_image", "llm_ask_audio", "llm_video_analysis"]
+      "taskTypes": ["llm_chat", "llm_prompt_lab", "llm_ask_image", "llm_ask_audio", "llm_video_analysis", "llm_rag"]
     },
     {
       "name": "Gemma3-1B-IT",
@@ -54,7 +54,7 @@
         "maxTokens": 1024,
         "accelerators": "gpu,cpu"
       },
-      "taskTypes": ["llm_chat", "llm_prompt_lab"],
+      "taskTypes": ["llm_chat", "llm_prompt_lab", "llm_rag"],
       "bestForTaskTypes": ["llm_chat", "llm_prompt_lab"]
     }
   ]

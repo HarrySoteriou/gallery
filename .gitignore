@@ -1,1 +1,8 @@
 .DS_Store
+
+# RAG model files
+Android/src/app/src/main/assets/Gecko_1024_quant.tflite
+Android/src/app/src/main/assets/sentencepiece.model
+
+# Claude Code configuration
+CLAUDE.md
