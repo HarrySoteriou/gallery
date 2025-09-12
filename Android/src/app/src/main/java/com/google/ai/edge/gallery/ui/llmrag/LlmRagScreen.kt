@@ -32,6 +32,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -60,6 +62,7 @@ fun LlmRagScreen(
   // Document browsing state
   val storedDocuments by viewModel.storedDocuments.collectAsStateWithLifecycle()
   val isLoadingDocuments by viewModel.isLoadingDocuments.collectAsStateWithLifecycle()
+  val retrievedDocuments by viewModel.retrievedDocuments.collectAsStateWithLifecycle()
   var showDocumentBrowser by remember { mutableStateOf(false) }
   var showDocumentPreview by remember { mutableStateOf(false) }
   var selectedDocumentId by remember { mutableStateOf<String?>(null) }
@@ -192,18 +195,24 @@ fun LlmRagScreen(
     // Get the task and use standard ChatView like other tasks
     val task = modelManagerViewModel.getTaskById(BuiltInTaskId.LLM_RAG)!!
     
-    // Use standard ChatView with custom input
-    selectedModel?.let { model ->
-      ChatView(
+    Column(modifier = Modifier.fillMaxSize()) {
+      // Retrieved documents display at the top
+      if (retrievedDocuments.isNotEmpty()) {
+        RetrievedDocumentsBar(
+          documents = retrievedDocuments,
+          onDismiss = { viewModel.clearRetrievedDocuments() }
+        )
+      }
+      
+      // Use standard ChatView with custom input
+      selectedModel?.let { model ->
+        ChatView(
         task = task,
         viewModel = viewModel,
         modelManagerViewModel = modelManagerViewModel,
         navigateUp = navigateUp,
         onSendMessage = { selectedModel, messages ->
-          // Convert messages to content and send through viewModel
-          for (message in messages) {
-            viewModel.addMessage(selectedModel, message)
-          }
+          // Only send through viewModel - it will handle adding messages
           val textMessages = messages.filterIsInstance<ChatMessageText>()
           if (textMessages.isNotEmpty()) {
             val content = textMessages.map { it.content }
@@ -232,9 +241,10 @@ fun LlmRagScreen(
         documentPickerLauncher = documentPickerLauncher,
         loadAssetDocument = loadAssetDocument,
         isProcessingDocument = isProcessingDocument,
+        modifier = Modifier.weight(1f)
       )
+      }
     }
-    
   }
 
   // Sample context dialog
@@ -396,6 +406,69 @@ fun LlmRagViewModel.sendVideoAnalysisMessage(
     } catch (e: Exception) {
       android.util.Log.e("LlmRagViewModel", "Failed to send video analysis message: ${e.message}")
       updateLastAssistantMessage(model, "Error: ${e.message}")
+    }
+  }
+}
+
+@Composable
+private fun RetrievedDocumentsBar(
+  documents: List<String>,
+  onDismiss: () -> Unit,
+  modifier: Modifier = Modifier
+) {
+  Card(
+    modifier = modifier
+      .fillMaxWidth()
+      .padding(horizontal = 12.dp, vertical = 8.dp),
+    colors = CardDefaults.cardColors(
+      containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f)
+    ),
+    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+  ) {
+    Row(
+      modifier = Modifier
+        .fillMaxWidth()
+        .padding(12.dp),
+      verticalAlignment = Alignment.CenterVertically
+    ) {
+      Icon(
+        Icons.Filled.Storage,
+        contentDescription = "Retrieved Documents",
+        tint = MaterialTheme.colorScheme.onPrimaryContainer,
+        modifier = Modifier.size(20.dp)
+      )
+      
+      Spacer(modifier = Modifier.width(8.dp))
+      
+      Column(modifier = Modifier.weight(1f)) {
+        Text(
+          text = "Using context from ${documents.size} document${if (documents.size > 1) "s" else ""}:",
+          style = MaterialTheme.typography.bodyMedium.copy(
+            fontWeight = FontWeight.SemiBold
+          ),
+          color = MaterialTheme.colorScheme.onPrimaryContainer
+        )
+        
+        Text(
+          text = documents.joinToString(", "),
+          style = MaterialTheme.typography.bodySmall,
+          color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f),
+          maxLines = 2,
+          overflow = TextOverflow.Ellipsis
+        )
+      }
+      
+      IconButton(
+        onClick = onDismiss,
+        modifier = Modifier.size(32.dp)
+      ) {
+        Icon(
+          Icons.Filled.Clear,
+          contentDescription = "Dismiss",
+          tint = MaterialTheme.colorScheme.onPrimaryContainer,
+          modifier = Modifier.size(16.dp)
+        )
+      }
     }
   }
 }

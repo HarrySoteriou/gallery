@@ -367,19 +367,31 @@ object LlmRagModelHelper {
     Log.i(TAG, "Using fallback RAG implementation")
     
     // Simple keyword-based retrieval from stored documents
-    val relevantChunks = retrieveRelevantChunks(prompt, maxChunks = 3)
+    val retrievalResult = retrieveRelevantChunks(prompt, maxChunks = 5)
+    Log.d(TAG, "Retrieved ${retrievalResult.chunks.size} relevant chunks from ${retrievalResult.sourceDocuments.size} documents for query: $prompt")
     
-    val enhancedPrompt = if (relevantChunks.isNotEmpty()) {
-      """Based on the following context information, please answer the question:
+    val enhancedPrompt = if (retrievalResult.chunks.isNotEmpty()) {
+      val contextInfo = retrievalResult.chunks.joinToString("\n\n") { chunk ->
+        "- $chunk"
+      }
+      Log.d(TAG, "Using enhanced prompt with context from documents: ${retrievalResult.sourceDocuments.joinToString(", ")}")
+      """Based on the following context information, please provide a comprehensive answer to the question:
 
-Context:
-${relevantChunks.joinToString("\n\n")}
+Context Information:
+$contextInfo
 
 Question: $prompt
 
+Please provide a detailed answer based on the context provided above. If the context doesn't contain relevant information, please state that clearly.
+
 Answer:"""
     } else {
-      prompt
+      Log.d(TAG, "No relevant context found, using original prompt")
+      """I don't have any specific context information in my knowledge base to answer this question. 
+
+Question: $prompt
+
+Answer: I would need more context or documents to be uploaded to provide a specific answer to this question."""
     }
     
     // Generate response using the enhanced prompt with context
@@ -401,26 +413,80 @@ Answer:"""
     }
   }
   
-  private fun retrieveRelevantChunks(query: String, maxChunks: Int = 3): List<String> {
-    if (documentStore.isEmpty()) return emptyList()
+  data class RetrievalResult(
+    val chunks: List<String>,
+    val sourceDocuments: List<String>
+  )
+  
+  // Store the last retrieval result for UI display
+  @Volatile
+  private var lastRetrievalResult: RetrievalResult? = null
+  
+  fun getLastRetrievalResult(): RetrievalResult? = lastRetrievalResult
+  
+  private fun retrieveRelevantChunks(query: String, maxChunks: Int = 3): RetrievalResult {
+    if (documentStore.isEmpty()) {
+      Log.d(TAG, "Document store is empty, no chunks to retrieve")
+      return RetrievalResult(emptyList(), emptyList())
+    }
+    
+    Log.d(TAG, "Searching ${documentStore.values.sumOf { it.size }} total chunks across ${documentStore.size} documents")
     
     val queryWords = query.lowercase().split("\\s+".toRegex()).filter { it.length > 2 }
-    val relevantChunks = mutableListOf<Pair<String, Int>>()
+    Log.d(TAG, "Query keywords: ${queryWords.joinToString(", ")}")
     
-    // Simple keyword-based scoring
-    documentStore.values.flatten().forEach { chunk ->
-      val chunkLower = chunk.lowercase()
-      val score = queryWords.count { word -> chunkLower.contains(word) }
-      if (score > 0) {
-        relevantChunks.add(Pair(chunk, score))
+    val relevantChunks = mutableListOf<Triple<String, Double, String>>() // chunk, score, documentId
+    
+    // Enhanced scoring: keyword matching + phrase matching + semantic similarity
+    documentStore.forEach { (documentId, chunks) ->
+      chunks.forEach { chunk ->
+        val chunkLower = chunk.lowercase()
+        var score = 0.0
+        
+        // Keyword matching (basic)
+        val keywordMatches = queryWords.count { word -> chunkLower.contains(word) }
+        score += keywordMatches * 1.0
+        
+        // Phrase matching (bonus for exact phrases)
+        val queryLower = query.lowercase()
+        if (chunkLower.contains(queryLower)) {
+          score += 3.0 // High bonus for exact phrase match
+        }
+        
+        // Partial phrase matching (for multi-word queries)
+        val queryPhrases = query.split(" ").filter { it.length > 3 }
+        queryPhrases.forEach { phrase ->
+          if (chunkLower.contains(phrase.lowercase())) {
+            score += 1.5
+          }
+        }
+        
+        // Length bonus for longer chunks (more context)
+        if (chunk.length > 200) {
+          score += 0.5
+        }
+        
+        if (score > 0) {
+          relevantChunks.add(Triple(chunk, score, documentId))
+        }
       }
     }
     
-    // Return top chunks by relevance score
-    return relevantChunks
+    val selectedResults = relevantChunks
       .sortedByDescending { it.second }
       .take(maxChunks)
-      .map { it.first }
+    
+    val selectedChunks = selectedResults.map { it.first }
+    val sourceDocumentIds = selectedResults.map { it.third }.distinct()
+    val sourceDocuments = sourceDocumentIds.mapNotNull { docId ->
+      documentMetadata[docId]?.title
+    }
+    
+    Log.d(TAG, "Selected ${selectedChunks.size} chunks from ${sourceDocuments.size} documents: ${sourceDocuments.joinToString(", ")}")
+    
+    val result = RetrievalResult(selectedChunks, sourceDocuments)
+    lastRetrievalResult = result
+    return result
   }
 
   fun clearContext(model: Model) {

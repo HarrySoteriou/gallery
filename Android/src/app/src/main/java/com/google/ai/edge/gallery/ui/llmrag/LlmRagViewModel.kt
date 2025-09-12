@@ -49,6 +49,10 @@ class LlmRagViewModel @Inject constructor() : ChatViewModel() {
   
   private val _isLoadingDocuments = MutableStateFlow(false)
   val isLoadingDocuments: StateFlow<Boolean> = _isLoadingDocuments.asStateFlow()
+  
+  // Track retrieved documents for the current query
+  private val _retrievedDocuments = MutableStateFlow<List<String>>(emptyList())
+  val retrievedDocuments: StateFlow<List<String>> = _retrievedDocuments.asStateFlow()
 
   fun memorizeText(model: Model, text: String, title: String = "Uploaded Document", source: String = "upload") {
     viewModelScope.launch {
@@ -135,6 +139,10 @@ class LlmRagViewModel @Inject constructor() : ChatViewModel() {
           LlmRagModelHelper.generateResponse(model, textContent, progressListener)
         }
 
+        // Update retrieved documents after response generation
+        val retrievalResult = LlmRagModelHelper.getLastRetrievalResult()
+        _retrievedDocuments.value = retrievalResult?.sourceDocuments ?: emptyList()
+
         // Final update with complete response
         updateLastAssistantMessage(model, response)
 
@@ -148,6 +156,7 @@ class LlmRagViewModel @Inject constructor() : ChatViewModel() {
   fun clearAllRagMessages(model: Model) {
     clearAllMessages(model)
     memorizedChunksCount = 0
+    _retrievedDocuments.value = emptyList()
     LlmRagModelHelper.clearContext(model)
     refreshStoredDocuments()
   }
@@ -203,6 +212,13 @@ class LlmRagViewModel @Inject constructor() : ChatViewModel() {
    */
   fun searchDocuments(query: String): List<LlmRagModelHelper.StoredDocument> {
     return LlmRagModelHelper.searchDocuments(query)
+  }
+  
+  /**
+   * Clear retrieved documents display
+   */
+  fun clearRetrievedDocuments() {
+    _retrievedDocuments.value = emptyList()
   }
 
   private fun addSystemMessage(model: Model, text: String) {
