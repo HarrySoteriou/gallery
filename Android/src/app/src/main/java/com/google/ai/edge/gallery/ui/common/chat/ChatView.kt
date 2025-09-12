@@ -93,6 +93,13 @@ fun ChatView(
   onStopButtonClicked: (Model) -> Unit = {},
   chatInputType: ChatInputType = ChatInputType.TEXT,
   showStopButtonInInputWhenInProgress: Boolean = false,
+  // RAG-specific parameters
+  onUploadDocumentClicked: () -> Unit = {},
+  onSelectDocumentClicked: () -> Unit = {},
+  onClearContextClicked: (Model) -> Unit = {},
+  documentPickerLauncher: androidx.activity.result.ActivityResultLauncher<String>? = null,
+  loadAssetDocument: (String, String) -> Unit = { _, _ -> },
+  isProcessingDocument: Boolean = false,
 ) {
   val uiState by viewModel.uiState.collectAsState()
   val modelManagerUiState by modelManagerViewModel.uiState.collectAsState()
@@ -212,6 +219,13 @@ fun ChatView(
                 modifier = Modifier.weight(1f),
                 chatInputType = chatInputType,
                 showStopButtonInInputWhenInProgress = showStopButtonInInputWhenInProgress,
+                // Pass through RAG parameters
+                onUploadDocumentClicked = onUploadDocumentClicked,
+                onSelectDocumentClicked = onSelectDocumentClicked,
+                onClearContextClicked = { onClearContextClicked(selectedModel) },
+                documentPickerLauncher = documentPickerLauncher,
+                loadAssetDocument = loadAssetDocument,
+                isProcessingDocument = isProcessingDocument,
               )
             // Model download
             false ->

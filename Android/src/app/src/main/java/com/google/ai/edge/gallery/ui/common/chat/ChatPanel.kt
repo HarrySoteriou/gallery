@@ -43,6 +43,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Timer
 import androidx.compose.material.icons.rounded.ContentCopy
@@ -97,6 +99,7 @@ import kotlinx.coroutines.launch
 enum class ChatInputType {
   TEXT,
   IMAGE,
+  RAG,
 }
 
 /** Composable function for the main chat panel, displaying messages and handling user input. */
@@ -118,6 +121,13 @@ fun ChatPanel(
   onImageSelected: (bitmaps: List<Bitmap>, selectedBitmapIndex: Int) -> Unit = { _, _ -> },
   chatInputType: ChatInputType = ChatInputType.TEXT,
   showStopButtonInInputWhenInProgress: Boolean = false,
+  // RAG-specific parameters
+  onUploadDocumentClicked: () -> Unit = {},
+  onSelectDocumentClicked: () -> Unit = {},
+  onClearContextClicked: () -> Unit = {},
+  documentPickerLauncher: androidx.activity.result.ActivityResultLauncher<String>? = null,
+  loadAssetDocument: (String, String) -> Unit = { _, _ -> },
+  isProcessingDocument: Boolean = false,
 ) {
   val uiState by viewModel.uiState.collectAsState()
   val modelManagerUiState by modelManagerViewModel.uiState.collectAsState()
@@ -524,10 +534,52 @@ fun ChatPanel(
           )
         }
       }
+      // Show an info message for LLM RAG task to get users started.
+      else if (task.id == BuiltInTaskId.LLM_RAG && messages.isEmpty()) {
+        Column(
+          modifier = Modifier.padding(horizontal = 16.dp).fillMaxSize(),
+          horizontalAlignment = Alignment.CenterHorizontally,
+          verticalArrangement = Arrangement.Center,
+        ) {
+          MessageBodyInfo(
+            ChatMessageInfo(
+              content =
+                "To get started, click the + button to add documents to the knowledge base, then ask questions about the content. Use the clear button (🗑️) to reset the context."
+            ),
+            smallFontSize = false,
+          )
+        }
+      }
     }
 
     // Chat input
     when (chatInputType) {
+      ChatInputType.RAG -> {
+        // Custom RAG input with document management
+        com.google.ai.edge.gallery.ui.llmrag.RagMessageInput(
+          curMessage = curMessage,
+          inProgress = uiState.inProgress,
+          isResettingSession = uiState.isResettingSession,
+          modelPreparing = uiState.preparing,
+          modelInitializing = modelInitializationStatus?.status == com.google.ai.edge.gallery.ui.modelmanager.ModelInitializationStatusType.INITIALIZING,
+          isProcessingDocument = isProcessingDocument,
+          onValueChanged = { curMessage = it },
+          onSendMessage = { message ->
+            onSendMessage(selectedModel, listOf(com.google.ai.edge.gallery.ui.common.chat.ChatMessageText(content = message, side = com.google.ai.edge.gallery.ui.common.chat.ChatSide.USER)))
+            curMessage = ""
+          },
+          onStopButtonClicked = { onStopButtonClicked() },
+          onUploadDocumentClicked = onUploadDocumentClicked,
+          onSelectDocumentClicked = onSelectDocumentClicked,
+          onClearContextClicked = onClearContextClicked,
+          documentPickerLauncher = documentPickerLauncher ?: rememberLauncherForActivityResult(
+            ActivityResultContracts.GetContent()
+          ) { uri -> 
+            // Empty fallback launcher if none provided
+          },
+          loadAssetDocument = loadAssetDocument
+        )
+      }
       ChatInputType.TEXT -> {
         //        val isLlmTask = task.type == TaskType.LLM_CHAT
         //        val notLlmStartScreen = !(messages.size == 1 && messages[0] is

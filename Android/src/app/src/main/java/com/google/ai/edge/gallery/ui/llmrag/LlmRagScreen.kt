@@ -24,20 +24,22 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Upload
-import androidx.compose.material.icons.filled.FileOpen
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Storage
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.google.ai.edge.gallery.data.BuiltInTaskId
-import com.google.ai.edge.gallery.ui.common.chat.ChatPanel
 import com.google.ai.edge.gallery.ui.common.chat.ChatView
 import com.google.ai.edge.gallery.ui.common.chat.ChatMessageText
+import com.google.ai.edge.gallery.ui.common.chat.ChatInputType
 import com.google.ai.edge.gallery.ui.modelmanager.ModelManagerViewModel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers  
@@ -55,9 +57,22 @@ fun LlmRagScreen(
   val context = LocalContext.current
   val coroutineScope = rememberCoroutineScope()
   
+  // Document browsing state
+  val storedDocuments by viewModel.storedDocuments.collectAsStateWithLifecycle()
+  val isLoadingDocuments by viewModel.isLoadingDocuments.collectAsStateWithLifecycle()
+  var showDocumentBrowser by remember { mutableStateOf(false) }
+  var showDocumentPreview by remember { mutableStateOf(false) }
+  var selectedDocumentId by remember { mutableStateOf<String?>(null) }
+  var previewDocument by remember { mutableStateOf<LlmRagModelHelper.StoredDocument?>(null) }
+  
+  // File processing state
+  var isProcessingDocument by remember { mutableStateOf(false) }
+
   // Trigger model allowlist loading - this ensures models are loaded before accessing them
   LaunchedEffect(Unit) {
     modelManagerViewModel.loadModelAllowlistWhenNeeded()
+    // Also refresh documents when screen loads
+    viewModel.refreshStoredDocuments()
   }
   
   val uiState by modelManagerViewModel.uiState.collectAsStateWithLifecycle()
@@ -118,7 +133,6 @@ fun LlmRagScreen(
   """.trimIndent()
 
   var showSampleDialog by remember { mutableStateOf(false) }
-  var isProcessingDocument by remember { mutableStateOf(false) }
 
   // File picker launcher
   val documentPickerLauncher = rememberLauncherForActivityResult(
@@ -136,108 +150,49 @@ fun LlmRagScreen(
           
           if (content.isNotBlank()) {
             selectedModel?.let { model ->
-              viewModel.memorizeText(model, content)
+              val fileName = uri.lastPathSegment ?: "Uploaded Document"
+              viewModel.memorizeText(model, content, fileName, "upload")
             }
           }
         } catch (e: Exception) {
           Log.e("LlmRagScreen", "Failed to read document: ${e.message}")
-          // You could show an error dialog here if needed
         } finally {
           isProcessingDocument = false
         }
       }
     }
   }
-
-  // Only show the header controls when no model is selected or when the model is not ready
-  val modelDownloadStatus = uiState.modelDownloadStatus[selectedModel?.name]
-  val showHeaderControls = selectedModel == null || modelDownloadStatus?.status != com.google.ai.edge.gallery.data.ModelDownloadStatusType.SUCCEEDED
   
-  Column(modifier = modifier.fillMaxSize()) {
-    // Header with memorization controls - only show when model is not ready
-    if (showHeaderControls) {
-      Card(
-        modifier = Modifier
-          .fillMaxWidth()
-          .padding(16.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
-      ) {
-        Column(
-          modifier = Modifier.padding(16.dp)
-        ) {
-          Text(
-            text = "RAG Knowledge Base",
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.Bold
-          )
-          
-          Spacer(modifier = Modifier.height(8.dp))
-          
-          Text(
-            text = "Add context documents to enhance the model's knowledge for more accurate responses.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-          )
-          
-          Spacer(modifier = Modifier.height(12.dp))
-          
-          Column(
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-          ) {
-            Row(
-              modifier = Modifier.fillMaxWidth(),
-              horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-              Button(
-                onClick = {
-                  documentPickerLauncher.launch("text/*")
-                },
-                enabled = !isProcessingDocument && selectedModel != null,
-                modifier = Modifier.weight(1f)
-              ) {
-                if (isProcessingDocument) {
-                  CircularProgressIndicator(
-                    modifier = Modifier.size(16.dp),
-                    strokeWidth = 2.dp
-                  )
-                  Spacer(modifier = Modifier.width(4.dp))
-                  Text("Processing...")
-                } else {
-                  Icon(Icons.Default.FileOpen, contentDescription = null)
-                  Spacer(modifier = Modifier.width(4.dp))
-                  Text("Upload Document")
-                }
-              }
-              
-              Button(
-                onClick = { showSampleDialog = true },
-                enabled = !isProcessingDocument && selectedModel != null,
-                modifier = Modifier.weight(1f)
-              ) {
-                Icon(Icons.Default.Upload, contentDescription = null)
-                Spacer(modifier = Modifier.width(4.dp))
-                Text("Add Sample")
-              }
-            }
-            
-            OutlinedButton(
-              onClick = {
-                selectedModel?.let { viewModel.clearAllRagMessages(it) }
-              },
-              enabled = selectedModel != null,
-              modifier = Modifier.fillMaxWidth()
-            ) {
-              Text("Clear Memory")
+  // Asset file loader
+  val loadAssetDocument = { fileName: String, title: String ->
+    isProcessingDocument = true
+    coroutineScope.launch {
+      try {
+        val content = withContext(Dispatchers.IO) {
+          context.assets.open("mock_documents/$fileName").use { inputStream ->
+            BufferedReader(InputStreamReader(inputStream, "UTF-8")).use { reader ->
+              reader.readText()
             }
           }
         }
+        
+        selectedModel?.let { model ->
+          viewModel.memorizeText(model, content, title, "sample")
+        }
+      } catch (e: Exception) {
+        Log.e("LlmRagScreen", "Failed to load asset document: ${e.message}")
+      } finally {
+        isProcessingDocument = false
       }
     }
-
-    // Get the task and use ChatView for proper background transitions
+    Unit
+  }
+  
+  Box(modifier = modifier.fillMaxSize()) {
+    // Get the task and use standard ChatView like other tasks
     val task = modelManagerViewModel.getTaskById(BuiltInTaskId.LLM_RAG)!!
     
-    // Only show the ChatView if we have a selected model
+    // Use standard ChatView with custom input
     selectedModel?.let { model ->
       ChatView(
         task = task,
@@ -257,9 +212,29 @@ fun LlmRagScreen(
         },
         onRunAgainClicked = { _, _ -> },
         onBenchmarkClicked = { _, _, _, _ -> },
-        modifier = Modifier.weight(1f)
+        onResetSessionClicked = { model ->
+          viewModel.clearAllRagMessages(model)
+        },
+        chatInputType = ChatInputType.RAG,
+        modifier = Modifier.fillMaxSize(),
+        // RAG-specific parameters
+        onUploadDocumentClicked = {
+          // Trigger document upload
+          documentPickerLauncher.launch("text/*")
+        },
+        onSelectDocumentClicked = { 
+          viewModel.refreshStoredDocuments()
+          showDocumentBrowser = true 
+        },
+        onClearContextClicked = { model ->
+          viewModel.clearAllRagMessages(model)
+        },
+        documentPickerLauncher = documentPickerLauncher,
+        loadAssetDocument = loadAssetDocument,
+        isProcessingDocument = isProcessingDocument,
       )
     }
+    
   }
 
   // Sample context dialog
@@ -295,7 +270,7 @@ fun LlmRagScreen(
           onClick = {
             selectedModel?.let { model ->
               coroutineScope.launch {
-                viewModel.memorizeText(model, sampleContext)
+                viewModel.memorizeText(model, sampleContext, "Android AI Edge Gallery Guide", "sample")
               }
             }
             showSampleDialog = false
@@ -308,6 +283,40 @@ fun LlmRagScreen(
         TextButton(onClick = { showSampleDialog = false }) {
           Text("Cancel")
         }
+      }
+    )
+  }
+  
+  // Document browser dialog
+  if (showDocumentBrowser) {
+    DocumentBrowserDialog(
+      documents = storedDocuments,
+      isLoading = isLoadingDocuments,
+      onDismiss = { showDocumentBrowser = false },
+      onRefresh = { viewModel.refreshStoredDocuments() },
+      onViewDocument = { documentId ->
+        selectedDocumentId = documentId
+        showDocumentBrowser = false
+        showDocumentPreview = true
+        coroutineScope.launch {
+          previewDocument = viewModel.getDocumentById(documentId)
+        }
+      },
+      onDeleteDocument = { documentId ->
+        viewModel.deleteDocument(documentId)
+      }
+    )
+  }
+  
+  // Document preview dialog
+  if (showDocumentPreview) {
+    DocumentPreviewDialog(
+      document = previewDocument,
+      isLoading = previewDocument == null && selectedDocumentId != null,
+      onDismiss = { 
+        showDocumentPreview = false
+        previewDocument = null
+        selectedDocumentId = null
       }
     )
   }
@@ -363,7 +372,7 @@ fun LlmRagViewModel.sendVideoAnalysisMessage(
             // Store in RAG memory asynchronously
             this@sendVideoAnalysisMessage.viewModelScope.launch(Dispatchers.Default) {
               try {
-                val error = LlmRagModelHelper.memorizeChunks(model, listOf(batchDescription))
+                val error = LlmRagModelHelper.memorizeChunks(model, listOf(batchDescription), "Video Analysis Batch #$batchNumber", "video_analysis")
                 if (error.isEmpty()) {
                   android.util.Log.d("VideoRAGAnalysis", "Successfully stored batch #$batchNumber in RAG memory")
                 } else {

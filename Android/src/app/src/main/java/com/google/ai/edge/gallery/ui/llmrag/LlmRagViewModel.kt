@@ -31,6 +31,9 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import javax.inject.Inject
 
 private const val TAG = "AGLlmRagViewModel"
@@ -39,8 +42,15 @@ private const val TAG = "AGLlmRagViewModel"
 class LlmRagViewModel @Inject constructor() : ChatViewModel() {
 
   private var memorizedChunksCount = 0
+  
+  // Document browsing state
+  private val _storedDocuments = MutableStateFlow<List<LlmRagModelHelper.DocumentMetadata>>(emptyList())
+  val storedDocuments: StateFlow<List<LlmRagModelHelper.DocumentMetadata>> = _storedDocuments.asStateFlow()
+  
+  private val _isLoadingDocuments = MutableStateFlow(false)
+  val isLoadingDocuments: StateFlow<Boolean> = _isLoadingDocuments.asStateFlow()
 
-  fun memorizeText(model: Model, text: String) {
+  fun memorizeText(model: Model, text: String, title: String = "Uploaded Document", source: String = "upload") {
     viewModelScope.launch {
       try {
         addSystemMessage(model, "Processing text for memorization...")
@@ -49,7 +59,7 @@ class LlmRagViewModel @Inject constructor() : ChatViewModel() {
         val chunks = chunkText(text)
         
         val error = withContext(Dispatchers.Default) {
-          LlmRagModelHelper.memorizeChunks(model, chunks)
+          LlmRagModelHelper.memorizeChunks(model, chunks, title, source)
         }
         
         if (error.isEmpty()) {
@@ -58,6 +68,8 @@ class LlmRagViewModel @Inject constructor() : ChatViewModel() {
             model, 
             "Successfully memorized ${chunks.size} chunks. Total chunks in memory: $memorizedChunksCount"
           )
+          // Refresh document list
+          refreshStoredDocuments()
         } else {
           addSystemMessage(model, "Error memorizing text: $error")
         }
@@ -79,7 +91,7 @@ class LlmRagViewModel @Inject constructor() : ChatViewModel() {
         }
         
         val error = withContext(Dispatchers.Default) {
-          LlmRagModelHelper.memorizeChunks(model, chunks)
+          LlmRagModelHelper.memorizeChunks(model, chunks, "Image Descriptions", "image_analysis")
         }
         
         if (error.isEmpty()) {
@@ -88,6 +100,8 @@ class LlmRagViewModel @Inject constructor() : ChatViewModel() {
             model, 
             "Successfully memorized ${chunks.size} image descriptions. Total chunks in memory: $memorizedChunksCount"
           )
+          // Refresh document list
+          refreshStoredDocuments()
         } else {
           addSystemMessage(model, "Error memorizing image descriptions: $error")
         }
@@ -135,6 +149,60 @@ class LlmRagViewModel @Inject constructor() : ChatViewModel() {
     clearAllMessages(model)
     memorizedChunksCount = 0
     LlmRagModelHelper.clearContext(model)
+    refreshStoredDocuments()
+  }
+  
+  /**
+   * Refresh the list of stored documents
+   */
+  fun refreshStoredDocuments() {
+    viewModelScope.launch {
+      _isLoadingDocuments.value = true
+      try {
+        val documents = withContext(Dispatchers.Default) {
+          LlmRagModelHelper.getDocumentMetadataList()
+        }
+        _storedDocuments.value = documents
+      } catch (e: Exception) {
+        Log.e(TAG, "Failed to refresh stored documents: ${e.message}")
+      } finally {
+        _isLoadingDocuments.value = false
+      }
+    }
+  }
+  
+  /**
+   * Get a specific document by ID
+   */
+  suspend fun getDocumentById(documentId: String): LlmRagModelHelper.StoredDocument? {
+    return withContext(Dispatchers.Default) {
+      LlmRagModelHelper.getDocumentById(documentId)
+    }
+  }
+  
+  /**
+   * Delete a document
+   */
+  fun deleteDocument(documentId: String) {
+    viewModelScope.launch {
+      try {
+        val deleted = withContext(Dispatchers.Default) {
+          LlmRagModelHelper.deleteDocument(documentId)
+        }
+        if (deleted) {
+          refreshStoredDocuments()
+        }
+      } catch (e: Exception) {
+        Log.e(TAG, "Failed to delete document: ${e.message}")
+      }
+    }
+  }
+  
+  /**
+   * Search documents
+   */
+  fun searchDocuments(query: String): List<LlmRagModelHelper.StoredDocument> {
+    return LlmRagModelHelper.searchDocuments(query)
   }
 
   private fun addSystemMessage(model: Model, text: String) {

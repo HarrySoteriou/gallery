@@ -254,9 +254,27 @@ object LlmRagModelHelper {
   // Simple in-memory document store as fallback when native RAG is not available
   private val documentStore = mutableMapOf<String, List<String>>()
   
+  // Document metadata for better organization
+  private val documentMetadata = mutableMapOf<String, DocumentMetadata>()
+  
+  data class DocumentMetadata(
+    val id: String,
+    val title: String,
+    val timestamp: Long,
+    val chunkCount: Int,
+    val source: String // "upload", "sample", "video_analysis", etc.
+  )
+  
+  data class StoredDocument(
+    val metadata: DocumentMetadata,
+    val chunks: List<String>
+  )
+  
   suspend fun memorizeChunks(
     model: Model,
-    chunks: List<String>
+    chunks: List<String>,
+    title: String = "Document",
+    source: String = "upload"
   ): String = coroutineScope {
     try {
       val ragInstance = model.instance as RagModelInstance
@@ -277,6 +295,13 @@ object LlmRagModelHelper {
           // Fallback to simple in-memory storage
           val documentId = "doc_${System.currentTimeMillis()}"
           documentStore[documentId] = chunks
+          documentMetadata[documentId] = DocumentMetadata(
+            id = documentId,
+            title = title,
+            timestamp = System.currentTimeMillis(),
+            chunkCount = chunks.size,
+            source = source
+          )
           Log.d(TAG, "Successfully memorized ${chunks.size} chunks using fallback storage")
           ""
         }
@@ -284,6 +309,13 @@ object LlmRagModelHelper {
         // Fallback to simple in-memory storage
         val documentId = "doc_${System.currentTimeMillis()}"
         documentStore[documentId] = chunks
+        documentMetadata[documentId] = DocumentMetadata(
+          id = documentId,
+          title = title,
+          timestamp = System.currentTimeMillis(),
+          chunkCount = chunks.size,
+          source = source
+        )
         Log.d(TAG, "Successfully memorized ${chunks.size} chunks using fallback storage")
         ""
       }
@@ -396,6 +428,7 @@ Answer:"""
       val ragInstance = model.instance as RagModelInstance
       // Clear fallback document store
       documentStore.clear()
+      documentMetadata.clear()
       Log.d(TAG, "Cleared document store")
       
       // Reset the underlying LLM session
@@ -413,6 +446,62 @@ Answer:"""
   
   fun clearDocuments() {
     documentStore.clear()
+    documentMetadata.clear()
     Log.d(TAG, "Manually cleared all documents from store")
+  }
+  
+  /**
+   * Get all stored documents with their metadata
+   */
+  fun getStoredDocuments(): List<StoredDocument> {
+    return documentStore.map { (id, chunks) ->
+      val metadata = documentMetadata[id] ?: DocumentMetadata(
+        id = id,
+        title = "Unknown Document",
+        timestamp = 0L,
+        chunkCount = chunks.size,
+        source = "unknown"
+      )
+      StoredDocument(metadata, chunks)
+    }
+  }
+  
+  /**
+   * Get document metadata only (for quick browsing)
+   */
+  fun getDocumentMetadataList(): List<DocumentMetadata> {
+    return documentMetadata.values.sortedByDescending { it.timestamp }
+  }
+  
+  /**
+   * Get a specific document by ID
+   */
+  fun getDocumentById(documentId: String): StoredDocument? {
+    val chunks = documentStore[documentId] ?: return null
+    val metadata = documentMetadata[documentId] ?: return null
+    return StoredDocument(metadata, chunks)
+  }
+  
+  /**
+   * Delete a specific document
+   */
+  fun deleteDocument(documentId: String): Boolean {
+    val removed = documentStore.remove(documentId) != null
+    documentMetadata.remove(documentId)
+    if (removed) {
+      Log.d(TAG, "Deleted document: $documentId")
+    }
+    return removed
+  }
+  
+  /**
+   * Search documents by title or content
+   */
+  fun searchDocuments(query: String): List<StoredDocument> {
+    val queryLower = query.lowercase()
+    return getStoredDocuments().filter { doc ->
+      doc.metadata.title.lowercase().contains(queryLower) ||
+      doc.chunks.any { chunk -> chunk.lowercase().contains(queryLower) }
+    }
   }
 }
