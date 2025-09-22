@@ -89,7 +89,7 @@ fun VideoFrameCaptureButton(
   var showCaptureDialog by remember { mutableStateOf(false) }
   var isCapturing by remember { mutableStateOf(false) }
   var captureCount by remember { mutableStateOf(0) }
-  val maxFrames = 10
+  val maxFrames = 5
   
   val cameraPermissionLauncher = rememberLauncherForActivityResult(
     ActivityResultContracts.RequestPermission()
@@ -192,11 +192,13 @@ private fun VideoFrameCaptureDialog(
             
             // Set preview size
             val supportedSizes = params.supportedPreviewSizes
-            val targetSize = supportedSizes.find { it.width == 640 && it.height == 480 }
-              ?: supportedSizes.firstOrNull()
-            
-            targetSize?.let {
-              params.setPreviewSize(it.width, it.height)
+            val targetSize = supportedSizes?.maxByOrNull { it.width * it.height }
+            targetSize?.let { size ->
+              params.setPreviewSize(size.width, size.height)
+            }
+
+            params.supportedPictureSizes?.maxByOrNull { it.width * it.height }?.let { size ->
+              params.setPictureSize(size.width, size.height)
             }
             
             this.parameters = params

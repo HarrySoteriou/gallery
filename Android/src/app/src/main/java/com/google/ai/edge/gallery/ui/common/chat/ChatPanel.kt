@@ -528,7 +528,7 @@ fun ChatPanel(
           MessageBodyInfo(
             ChatMessageInfo(
               content =
-                "To get started, click the video camera icon below to capture 10 frames at 1 FPS intervals, then type a prompt to analyze the video frames."
+                "To get started, click the video camera icon below to capture 5 frames at 1 FPS intervals, then type a prompt to analyze the video frames."
             ),
             smallFontSize = false,
           )
@@ -619,60 +619,56 @@ fun ChatPanel(
           showAudioItemsInMenu =
             selectedModel.llmSupportAudio && task.id === BuiltInTaskId.LLM_ASK_AUDIO,
           showStopButtonWhenInProgress = showStopButtonInInputWhenInProgress,
-          showVideoFrameCaptureButton = task.id === BuiltInTaskId.VIDEO_ANALYSIS,
+          showVideoFrameCaptureButton =
+            task.id === BuiltInTaskId.VIDEO_ANALYSIS || task.id === BuiltInTaskId.VIDEO_RAG_ANALYSIS,
           onVideoFramesCaptured = { frames ->
-            // Clear previous context when capturing new video frames
-            // This ensures each video analysis starts with fresh context
-            viewModel.clearAllMessages(selectedModel)
-            
-            // IMPROVED: Also clear model's internal context using the unified approach
-            // This fixes the null output issue on subsequent inferences
             if (task.id == BuiltInTaskId.VIDEO_ANALYSIS) {
+              // Clear previous context when capturing new video frames
+              viewModel.clearAllMessages(selectedModel)
+
               com.google.ai.edge.gallery.ui.videoanalysis.VideoAnalysisMemoryManager
                 .clearContextForNewBatch(task, selectedModel)
+
+              val imageMessage = ChatMessageImage(
+                bitmaps = frames,
+                imageBitMaps = frames.map { it.asImageBitmap() },
+                side = ChatSide.USER
+              )
+              val analysisPrompt = """
+                Analyze the following sequence of video frames captured at 1 FPS intervals. 
+                Identify unique people and respond in JSON format:
+                {
+                  "detected_objects": [
+                    {
+                      "name": "person_1", 
+                      "description": "Brief description of person",
+                    }
+                  ],
+                  "summary": "Overall summary of what was observed across the frames",
+                }
+              """.trimIndent()
+
+              val textMessage = ChatMessageText(
+                content = analysisPrompt,
+                side = ChatSide.USER
+              )
+
+              onSendMessage(selectedModel, listOf(imageMessage, textMessage))
+            } else if (task.id == BuiltInTaskId.VIDEO_RAG_ANALYSIS) {
+              val imageMessage = ChatMessageImage(
+                bitmaps = frames,
+                imageBitMaps = frames.map { it.asImageBitmap() },
+                side = ChatSide.USER
+              )
+              onSendMessage(selectedModel, listOf(imageMessage))
+            } else {
+              val imageMessage = ChatMessageImage(
+                bitmaps = frames,
+                imageBitMaps = frames.map { it.asImageBitmap() },
+                side = ChatSide.USER
+              )
+              onSendMessage(selectedModel, listOf(imageMessage))
             }
-            
-            // Send frames directly to the chat with structured analysis prompt
-            val imageMessage = ChatMessageImage(
-              bitmaps = frames,
-              imageBitMaps = frames.map { it.asImageBitmap() },
-              side = ChatSide.USER
-            )
-            val analysisPrompt = """
-              Analyze the following sequence of video frames captured at 1 FPS intervals. 
-              
-              Please identify unique people in these frames and provide your response 
-              in the following JSON format:
-              
-              {
-                "detected_objects": [
-                  {
-                    "name": "person_1", 
-                    "confidence": 0.95,
-                    "description": "Brief description",
-                    "position": {"x": 0.3, "y": 0.4, "width": 0.2, "height": 0.4}
-                  }
-                ],
-                "summary": "Overall summary of what was observed across the frames",
-                "scene_description": "Description of the overall scene and context"
-              }
-              
-              Focus on:
-              1. Identifying distinct people and their characteristics
-              2. Tracking their movement or changes across frames
-              3. Providing confidence scores for each detection
-              4. Describing the overall scene context
-              
-              Please be thorough but concise in your descriptions.
-            """.trimIndent()
-            
-            val textMessage = ChatMessageText(
-              content = analysisPrompt,
-              side = ChatSide.USER
-            )
-            
-            // Send the video analysis messages
-            onSendMessage(selectedModel, listOf(imageMessage, textMessage))
           },
         )
       }
