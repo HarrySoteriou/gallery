@@ -119,7 +119,7 @@ fun VideoAnalysisQuickStart(
       Spacer(modifier = Modifier.height(8.dp))
       
       Text(
-        text = "Capture 10 frames at 1 FPS intervals, then analyze with your selected VLM model",
+        text = "Capture 5 frames at 1 FPS intervals, then analyze with your selected VLM model",
         style = MaterialTheme.typography.bodyMedium,
         color = MaterialTheme.colorScheme.onPrimaryContainer
       )
@@ -206,35 +206,15 @@ fun VideoAnalysisQuickStart(
 
 private fun buildVideoAnalysisPrompt(): String {
   return """
-    Analyze the following sequence of video frames captured at 1 FPS intervals. 
-    
-    Please identify people in these frames and provide your response 
-    in the following JSON format:
-    
+    Analyze the following sequence of video frames and identify people. Respond in JSON format:
     {
       "detected_objects": [
         {
           "name": "object_name",
-          "confidence": 0.95,
           "description": "Concise description of the object",
-          "position": {
-            "x": 0.3,
-            "y": 0.4, 
-            "width": 0.2,
-            "height": 0.4
-          }
         }
       ],
-      "summary": "Overall summary of what was observed across the frames",
-      "scene_description": "Description of the overall scene and context"
     }
-    
-    Focus on:
-    1. Identifying distinct people and their characteristics
-    2. Tracking their movement or changes across frames
-    3. Providing confidence scores for each detection
-    4. Describing the overall scene context
-    
-    Please be thorough but concise in your descriptions.
+  "scene_description": "Description of the overall scene"
   """.trimIndent()
 }
