@@ -142,7 +142,7 @@ fun DocumentPreviewDialog(
               )
               Spacer(modifier = Modifier.height(16.dp))
               Text(
-                text = "Document not found",
+                text = "Loading document...",
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
               )

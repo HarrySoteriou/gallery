@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//mnt/c/Users/mario/OneDrive/Desktop/ai-edge-apis/examples/rag/android/**)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

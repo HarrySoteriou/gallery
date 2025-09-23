@@ -1,4 +1,4 @@
-/*
+﻿/*
  * Copyright 2025 Google LLC
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -44,8 +44,9 @@ import com.google.ai.edge.gallery.ui.common.chat.ChatMessageText
 import com.google.ai.edge.gallery.ui.common.chat.ChatInputType
 import com.google.ai.edge.gallery.ui.modelmanager.ModelManagerViewModel
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.Dispatchers  
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.BufferedReader
 import java.io.InputStreamReader
 
@@ -67,6 +68,7 @@ fun LlmRagScreen(
   var showDocumentPreview by remember { mutableStateOf(false) }
   var selectedDocumentId by remember { mutableStateOf<String?>(null) }
   var previewDocument by remember { mutableStateOf<LlmRagModelHelper.StoredDocument?>(null) }
+  var isLoadingPreviewDocument by remember { mutableStateOf(false) }
   
   // File processing state
   var isProcessingDocument by remember { mutableStateOf(false) }
@@ -80,47 +82,15 @@ fun LlmRagScreen(
   
   val uiState by modelManagerViewModel.uiState.collectAsStateWithLifecycle()
   val selectedModel = uiState.selectedModel
-  var previousModel by remember { mutableStateOf<com.google.ai.edge.gallery.data.Model?>(null) }
-  
-  // Handle model selection changes - cleanup previous model and initialize new one
-  LaunchedEffect(selectedModel) {
-    if (previousModel != null && selectedModel != previousModel) {
-      Log.d("LlmRagScreen", "Cleaning up previous RAG model: ${previousModel?.name}")
-      val task = modelManagerViewModel.getTaskById(com.google.ai.edge.gallery.data.BuiltInTaskId.LLM_RAG)!!
-      previousModel?.let { model ->
-        LlmRagModelHelper.cleanUp(model) {
-          Log.d("LlmRagScreen", "Previous RAG model cleaned up")
-        }
-      }
-    }
-    previousModel = selectedModel
-  }
-  
-  // Initialize RAG model when model/download state changes - matches ChatView pattern
-  val curDownloadStatus = uiState.modelDownloadStatus[selectedModel.name]
-  LaunchedEffect(curDownloadStatus, selectedModel.name) {
-    if (selectedModel != null && curDownloadStatus?.status == com.google.ai.edge.gallery.data.ModelDownloadStatusType.SUCCEEDED) {
-      Log.d("LlmRagScreen", "Initializing RAG model '${selectedModel.name}' with Gecko and SentencePiece")
-      LlmRagModelHelper.initialize(
-        context = context,
-        model = selectedModel,
-        onDone = { error ->
-          if (error.isNotEmpty()) {
-            Log.e("LlmRagScreen", "Failed to initialize RAG model: $error")
-          } else {
-            Log.d("LlmRagScreen", "RAG model successfully initialized with Gecko embeddings")
-          }
-        }
-      )
-    }
-  }
+  // Initialization and cleanup are handled by ChatView via ModelManager + Task module.
+  // Avoid double-init here to prevent races and state confusion.
   
   // Sample context text for demonstration
   val sampleContext = """
   The Android AI Edge Gallery is a comprehensive showcase application that demonstrates the capabilities of on-device AI models using MediaPipe and TensorFlow Lite. 
   
   The gallery includes various AI tasks such as:
-  - Large Language Model (LLM) inference for text generation and chat
+  - Large Language Model (LLMmodel) inference for text generation and chat
   - Image classification and object detection
   - Audio processing and speech recognition
   - Video analysis for real-time scene understanding
@@ -145,24 +115,41 @@ fun LlmRagScreen(
       isProcessingDocument = true
       coroutineScope.launch {
         try {
+          Log.d("LlmRagScreen", "Processing document upload from URI: $uri")
           val content = context.contentResolver.openInputStream(uri)?.use { inputStream ->
             BufferedReader(InputStreamReader(inputStream, "UTF-8")).use { reader ->
               reader.readText()
             }
           } ?: ""
-          
           if (content.isNotBlank()) {
-            selectedModel?.let { model ->
+            selectedModel.let { model ->
               val fileName = uri.lastPathSegment ?: "Uploaded Document"
+              Log.d("LlmRagScreen", "Document loaded successfully: $fileName (${content.length} characters)")
+              Log.d("LlmRagScreen", "Selected model: ${model.name}, instance: ${model.instance?.javaClass?.simpleName}")
               viewModel.memorizeText(model, content, fileName, "upload")
             }
+          } else {
+            Log.w("LlmRagScreen", "Document is empty or could not be read")
+            selectedModel.let { model ->
+              viewModel.memorizeText(model, "", "Empty Document", "upload") // This will trigger the error handling in ViewModel
+            }
           }
+        } catch (e: SecurityException) {
+          Log.e("LlmRagScreen", "Permission denied reading document: ${e.message}")
+          // TODO: Show user-friendly error message
+        } catch (e: java.io.IOException) {
+          Log.e("LlmRagScreen", "IO error reading document: ${e.message}")
+          // TODO: Show user-friendly error message
         } catch (e: Exception) {
           Log.e("LlmRagScreen", "Failed to read document: ${e.message}")
+          // TODO: Show user-friendly error message
         } finally {
           isProcessingDocument = false
         }
       }
+    } ?: run {
+      Log.w("LlmRagScreen", "Document selection cancelled or no URI provided")
+      isProcessingDocument = false
     }
   }
   
@@ -207,30 +194,30 @@ fun LlmRagScreen(
       // Use standard ChatView with custom input
       selectedModel?.let { model ->
         ChatView(
-        task = task,
-        viewModel = viewModel,
-        modelManagerViewModel = modelManagerViewModel,
-        navigateUp = navigateUp,
-        onSendMessage = { selectedModel, messages ->
-          // Only send through viewModel - it will handle adding messages
-          val textMessages = messages.filterIsInstance<ChatMessageText>()
-          if (textMessages.isNotEmpty()) {
-            val content = textMessages.map { it.content }
-            viewModel.sendMessage(selectedModel, content)
-          }
-        },
-        onRunAgainClicked = { _, _ -> },
-        onBenchmarkClicked = { _, _, _, _ -> },
-        onResetSessionClicked = { model ->
-          viewModel.clearAllRagMessages(model)
-        },
-        chatInputType = ChatInputType.RAG,
-        modifier = Modifier.fillMaxSize(),
-        // RAG-specific parameters
-        onUploadDocumentClicked = {
-          // Trigger document upload
-          documentPickerLauncher.launch("text/*")
-        },
+          task = task,
+          viewModel = viewModel,
+          modelManagerViewModel = modelManagerViewModel,
+          navigateUp = navigateUp,
+          onSendMessage = { selectedModel, messages ->
+            // Only send through viewModel - it will handle adding messages
+            val textMessages = messages.filterIsInstance<ChatMessageText>()
+            if (textMessages.isNotEmpty()) {
+              val content = textMessages.map { it.content }
+              viewModel.sendMessage(selectedModel, content)
+            }
+          },
+          onRunAgainClicked = { _, _ -> },
+          onBenchmarkClicked = { _, _, _, _ -> },
+          onResetSessionClicked = { model ->
+            viewModel.clearAllRagMessages(model)
+          },
+          chatInputType = ChatInputType.RAG,
+          modifier = Modifier.fillMaxSize(),
+          // RAG-specific parameters
+          onUploadDocumentClicked = {
+            // Trigger document upload
+            documentPickerLauncher.launch("text/*")
+          },
         onSelectDocumentClicked = { 
           viewModel.refreshStoredDocuments()
           showDocumentBrowser = true 
@@ -238,11 +225,10 @@ fun LlmRagScreen(
         onClearContextClicked = { model ->
           viewModel.clearAllRagMessages(model)
         },
-        documentPickerLauncher = documentPickerLauncher,
-        loadAssetDocument = loadAssetDocument,
-        isProcessingDocument = isProcessingDocument,
-        modifier = Modifier.weight(1f)
-      )
+          documentPickerLauncher = documentPickerLauncher,
+          loadAssetDocument = loadAssetDocument,
+          isProcessingDocument = isProcessingDocument,
+        )
       }
     }
   }
@@ -307,9 +293,39 @@ fun LlmRagScreen(
       onViewDocument = { documentId ->
         selectedDocumentId = documentId
         showDocumentBrowser = false
+        // Show preview dialog with loading state
         showDocumentPreview = true
+        previewDocument = null // Reset to null to show loading state
+        isLoadingPreviewDocument = true
+
+        // Load document asynchronously with timeout
         coroutineScope.launch {
-          previewDocument = viewModel.getDocumentById(documentId)
+          try {
+            // Add timeout to prevent infinite loading
+            val document = withTimeoutOrNull(10000) { // 10 second timeout
+              viewModel.getDocumentById(documentId)
+            }
+
+            if (document != null) {
+              previewDocument = document
+              isLoadingPreviewDocument = false
+              Log.d("LlmRagScreen", "Successfully loaded document: ${document.metadata.title}")
+            } else {
+              Log.w("LlmRagScreen", "Document not found or loading timed out: $documentId")
+              // Document not found or timeout, close preview and reset state
+              isLoadingPreviewDocument = false
+              showDocumentPreview = false
+              selectedDocumentId = null
+              // TODO: Show error message to user
+            }
+          } catch (e: Exception) {
+            Log.e("LlmRagScreen", "Error loading document $documentId: ${e.message}")
+            // Error loading document, close preview and reset state
+            isLoadingPreviewDocument = false
+            showDocumentPreview = false
+            selectedDocumentId = null
+            // TODO: Show error message to user
+          }
         }
       },
       onDeleteDocument = { documentId ->
@@ -322,11 +338,13 @@ fun LlmRagScreen(
   if (showDocumentPreview) {
     DocumentPreviewDialog(
       document = previewDocument,
-      isLoading = previewDocument == null && selectedDocumentId != null,
-      onDismiss = { 
+      isLoading = isLoadingPreviewDocument,
+      onDismiss = {
+        // Allow dismissal at any time - if loading, it will be cancelled
         showDocumentPreview = false
         previewDocument = null
         selectedDocumentId = null
+        isLoadingPreviewDocument = false
       }
     )
   }
@@ -366,15 +384,18 @@ fun LlmRagViewModel.sendVideoAnalysisMessage(
 
       val progressListener = object : com.google.ai.edge.localagents.rag.models.AsyncProgressListener<com.google.ai.edge.localagents.rag.models.LanguageModelResponse> {
         override fun run(partialResult: com.google.ai.edge.localagents.rag.models.LanguageModelResponse, done: Boolean) {
-          updateLastAssistantMessage(model, partialResult.text)
+          val text = partialResult.text
+          if (!text.isNullOrBlank()) {
+            updateLastAssistantMessage(model, text)
+          }
           
           // When analysis is complete, automatically memorize the result
-          if (done && partialResult.text.isNotBlank()) {
+          if (done && !text.isNullOrBlank()) {
             val batchDescription = """
               Video Batch #$batchNumber Analysis:
               Timestamp: ${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())}
               
-              ${partialResult.text}
+              $text
               
               [This is a video analysis result stored for cross-batch querying]
             """.trimIndent()
@@ -396,7 +417,7 @@ fun LlmRagViewModel.sendVideoAnalysisMessage(
         }
       }
 
-      val response = withContext(kotlinx.coroutines.Dispatchers.Default) {
+      withContext(kotlinx.coroutines.Dispatchers.Default) {
         LlmRagModelHelper.generateResponse(model, textContent, progressListener)
       }
 

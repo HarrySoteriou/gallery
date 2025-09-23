@@ -57,10 +57,19 @@ class LlmRagViewModel @Inject constructor() : ChatViewModel() {
   fun memorizeText(model: Model, text: String, title: String = "Uploaded Document", source: String = "upload") {
     viewModelScope.launch {
       try {
-        addSystemMessage(model, "Processing text for memorization...")
+        Log.d(TAG, "Starting memorization for document '$title' with model: ${model.name}")
+        Log.d(TAG, "Model instance type: ${model.instance?.javaClass?.simpleName}")
+        addSystemMessage(model, "Processing document '$title' for memorization...")
+        
+        // Validate input
+        if (text.isBlank()) {
+          addSystemMessage(model, "Error: Document is empty or contains no text")
+          return@launch
+        }
         
         // Simple chunking strategy: split by paragraphs and sentences
         val chunks = chunkText(text)
+        Log.d(TAG, "Created ${chunks.size} chunks from document '$title'")
         
         val error = withContext(Dispatchers.Default) {
           LlmRagModelHelper.memorizeChunks(model, chunks, title, source)
@@ -70,16 +79,19 @@ class LlmRagViewModel @Inject constructor() : ChatViewModel() {
           memorizedChunksCount += chunks.size
           addSystemMessage(
             model, 
-            "Successfully memorized ${chunks.size} chunks. Total chunks in memory: $memorizedChunksCount"
+            "✅ Successfully memorized '${title}' with ${chunks.size} chunks. Total chunks in memory: $memorizedChunksCount"
           )
           // Refresh document list
           refreshStoredDocuments()
+          Log.d(TAG, "Successfully memorized document '$title' with ${chunks.size} chunks")
         } else {
-          addSystemMessage(model, "Error memorizing text: $error")
+          addSystemMessage(model, "❌ Error memorizing '$title': $error")
+          Log.e(TAG, "Failed to memorize document '$title': $error")
         }
       } catch (e: Exception) {
-        Log.e(TAG, "Failed to memorize text: ${e.message}")
-        addSystemMessage(model, "Failed to memorize text: ${e.message}")
+        val errorMessage = "Failed to memorize document '$title': ${e.message}"
+        Log.e(TAG, errorMessage)
+        addSystemMessage(model, "❌ $errorMessage")
       }
     }
   }
@@ -130,8 +142,11 @@ class LlmRagViewModel @Inject constructor() : ChatViewModel() {
 
         val progressListener = object : AsyncProgressListener<LanguageModelResponse> {
           override fun run(partialResult: LanguageModelResponse, done: Boolean) {
-            // Update the loading message with partial result
-            updateLastAssistantMessage(model, partialResult.text)
+            // Some backends may emit null or empty text in partials; guard it.
+            val text = partialResult.text
+            if (!text.isNullOrBlank()) {
+              updateLastAssistantMessage(model, text)
+            }
           }
         }
 
@@ -184,8 +199,13 @@ class LlmRagViewModel @Inject constructor() : ChatViewModel() {
    * Get a specific document by ID
    */
   suspend fun getDocumentById(documentId: String): LlmRagModelHelper.StoredDocument? {
-    return withContext(Dispatchers.Default) {
-      LlmRagModelHelper.getDocumentById(documentId)
+    return try {
+      withContext(Dispatchers.Default) {
+        LlmRagModelHelper.getDocumentById(documentId)
+      }
+    } catch (e: Exception) {
+      Log.e(TAG, "Error retrieving document $documentId: ${e.message}")
+      null
     }
   }
   

@@ -74,10 +74,10 @@ adb push path/to/your/model /data/local/tmp/llm/model_version.task
 
 ### Embedder Settings
 The following constants can be modified in `LlmRagModelHelper.kt`:
-- `GECKO_MODEL_PATH`: Path to Gecko embedder model
-- `TOKENIZER_MODEL_PATH`: Path to tokenizer model
-- `USE_GPU_FOR_EMBEDDINGS`: Enable GPU acceleration for embeddings
-- `EMBEDDING_DIMENSION`: Vector dimension (768 for Gecko)
+- `GECKO_EMBEDDING_MODEL_FILENAME`: Gecko embedder model file name (e.g., `Gecko_1024_quant.tflite`)
+- `GECKO_TOKENIZER_FILENAME`: Tokenizer model file name (e.g., `sentencepiece.model`)
+- `EMBEDDING_DIMENSION`: Must match your Gecko model's dimension (e.g., 1024 for `Gecko_1024_*`)
+- GPU usage for embeddings is derived from the model's `ACCELERATOR` config (GPU recommended).
 
 ### RAG Parameters
 Configure in `LlmRagModelHelper.kt`:
