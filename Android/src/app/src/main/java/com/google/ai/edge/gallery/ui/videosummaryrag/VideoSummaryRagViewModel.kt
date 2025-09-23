@@ -8,6 +8,7 @@ import com.google.ai.edge.gallery.data.Model
 import com.google.ai.edge.gallery.data.Task
 import com.google.ai.edge.gallery.ui.llmchat.LlmChatModelHelper
 import com.google.ai.edge.gallery.ui.llmrag.LlmRagModelHelper
+import com.google.ai.edge.gallery.ui.llmrag.RagModelInstance
 import com.google.ai.edge.gallery.ui.videosummaryrag.data.VideoBatchRecord
 import com.google.ai.edge.gallery.ui.videosummaryrag.data.VideoBatchRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -79,7 +80,8 @@ class VideoSummaryRagViewModel @Inject constructor(
     }
 
     // Ensure the retrieval model is a properly initialized RAG instance.
-    if (ragModel.instance == null || ragModel.instance !is com.google.ai.edge.gallery.ui.llmrag.RagModelInstance) {
+    val ragInstance = ragModel.instance as? RagModelInstance
+    if (ragInstance == null) {
       _uiState.update { it.copy(errorMessage = "RAG model is still initializing. Please wait and try again.") }
       return
     }
@@ -98,6 +100,9 @@ class VideoSummaryRagViewModel @Inject constructor(
         if (summaryText.isEmpty()) {
           throw IllegalStateException("Model returned an empty summary")
         }
+
+        val resolvedEmbeddingDimension = ragInstance.embeddingDimension
+        Log.d(TAG, "Video batch memorization using embedding dimension: $resolvedEmbeddingDimension")
 
         val previousDocIds = withContext(Dispatchers.Default) {
           LlmRagModelHelper.getDocumentMetadataList().map { it.id }.toSet()

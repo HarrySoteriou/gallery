@@ -92,7 +92,8 @@ data class RagModelInstance(
   val llmInstance: LlmModelInstance,
   val ragChain: RetrievalAndInferenceChain?,
   val embedder: Embedder<String>?,
-  val semanticMemory: com.google.ai.edge.localagents.rag.memory.SemanticMemory<String>?
+  val semanticMemory: com.google.ai.edge.localagents.rag.memory.SemanticMemory<String>?,
+  val embeddingDimension: Int,
 )
 
 object LlmRagModelHelper {
@@ -164,6 +165,8 @@ object LlmRagModelHelper {
               null
             }
 
+            var embeddingDimension = DEFAULT_EMBEDDING_DIMENSION
+
             // Set up embedder (Gecko embedding model - separate from Gemma3-1T-IT LLM)
             val embedder = try {
               // Construct full paths using the app's external files directory
@@ -202,12 +205,10 @@ object LlmRagModelHelper {
               Log.w(TAG, "Failed to initialize Gecko embedder, using fallback: ${e.message}")
               null
             }
-            
+
             // Derive the semantic memory vector store dimension from the embedder when available.
-            val embeddingDimension = if (embedder != null) {
-              determineEmbeddingDimension(embedder)
-            } else {
-              DEFAULT_EMBEDDING_DIMENSION
+            if (embedder != null) {
+              embeddingDimension = determineEmbeddingDimension(embedder)
             }
 
             Log.d(TAG, "Using embedding dimension: $embeddingDimension")
@@ -258,7 +259,8 @@ object LlmRagModelHelper {
               llmInstance = llmInstance,
               ragChain = ragChain,
               embedder = embedder,
-              semanticMemory = semanticMemory
+              semanticMemory = semanticMemory,
+              embeddingDimension = embeddingDimension,
             )
             
             Log.d(TAG, "RAG model initialized successfully with CPU mode")
@@ -273,7 +275,8 @@ object LlmRagModelHelper {
                 llmInstance = llmInstance,
                 ragChain = null,
                 embedder = null,
-                semanticMemory = null
+                semanticMemory = null,
+                embeddingDimension = embeddingDimension,
               )
               Log.i(TAG, "RAG initialization failed, but basic LLM functionality is available")
               onDone("") // Don't report as error, just use fallback
@@ -344,6 +347,11 @@ object LlmRagModelHelper {
       Log.w(TAG, "Unable to probe embedding dimension, falling back to default: ${e.message}")
       DEFAULT_EMBEDDING_DIMENSION
     }
+  }
+
+  fun getResolvedEmbeddingDimension(model: Model): Int? {
+    val ragInstance = model.instance as? RagModelInstance ?: return null
+    return ragInstance.embeddingDimension.takeIf { it > 0 }
   }
 
   // Simple in-memory document store as fallback when native RAG is not available

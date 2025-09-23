@@ -1,4 +1,4 @@
-﻿/*
+/*
  * Copyright 2025 Google LLC
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,16 +19,38 @@ package com.google.ai.edge.gallery.ui.llmrag
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.material3.*
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Storage
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.filled.Upload
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -39,12 +61,12 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.google.ai.edge.gallery.data.BuiltInTaskId
-import com.google.ai.edge.gallery.ui.common.chat.ChatView
-import com.google.ai.edge.gallery.ui.common.chat.ChatMessageText
 import com.google.ai.edge.gallery.ui.common.chat.ChatInputType
+import com.google.ai.edge.gallery.ui.common.chat.ChatMessageText
+import com.google.ai.edge.gallery.ui.common.chat.ChatView
 import com.google.ai.edge.gallery.ui.modelmanager.ModelManagerViewModel
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.BufferedReader
@@ -122,7 +144,7 @@ fun LlmRagScreen(
             }
           } ?: ""
           if (content.isNotBlank()) {
-            selectedModel.let { model ->
+            selectedModel?.let { model ->
               val fileName = uri.lastPathSegment ?: "Uploaded Document"
               Log.d("LlmRagScreen", "Document loaded successfully: $fileName (${content.length} characters)")
               Log.d("LlmRagScreen", "Selected model: ${model.name}, instance: ${model.instance?.javaClass?.simpleName}")
@@ -130,7 +152,7 @@ fun LlmRagScreen(
             }
           } else {
             Log.w("LlmRagScreen", "Document is empty or could not be read")
-            selectedModel.let { model ->
+            selectedModel?.let { model ->
               viewModel.memorizeText(model, "", "Empty Document", "upload") // This will trigger the error handling in ViewModel
             }
           }
@@ -218,13 +240,13 @@ fun LlmRagScreen(
             // Trigger document upload
             documentPickerLauncher.launch("text/*")
           },
-        onSelectDocumentClicked = { 
-          viewModel.refreshStoredDocuments()
-          showDocumentBrowser = true 
-        },
-        onClearContextClicked = { model ->
-          viewModel.clearAllRagMessages(model)
-        },
+          onSelectDocumentClicked = {
+            viewModel.refreshStoredDocuments()
+            showDocumentBrowser = true
+          },
+          onClearContextClicked = { model ->
+            viewModel.clearAllRagMessages(model)
+          },
           documentPickerLauncher = documentPickerLauncher,
           loadAssetDocument = loadAssetDocument,
           isProcessingDocument = isProcessingDocument,

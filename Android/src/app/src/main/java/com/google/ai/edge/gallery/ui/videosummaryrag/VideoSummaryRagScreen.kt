@@ -36,6 +36,7 @@ import com.google.ai.edge.gallery.data.Task
 import com.google.ai.edge.gallery.ui.common.chat.ChatMessageText
 import com.google.ai.edge.gallery.ui.common.chat.ChatView
 import com.google.ai.edge.gallery.ui.common.chat.ChatInputType
+import com.google.ai.edge.gallery.ui.llmrag.LlmRagModelHelper
 import com.google.ai.edge.gallery.ui.llmrag.LlmRagViewModel
 import com.google.ai.edge.gallery.ui.modelmanager.ModelInitializationStatusType
 import com.google.ai.edge.gallery.ui.modelmanager.ModelManagerViewModel
@@ -90,6 +91,7 @@ fun VideoSummaryRagScreen(
 
   val visionModel = modelManagerViewModel.getModelByName(selectedVisionModelName)
   val ragModel = modelManagerViewModel.getModelByName(selectedRagModelName)
+  val ragEmbeddingDimension = ragModel?.let { LlmRagModelHelper.getResolvedEmbeddingDimension(it) }
 
   LaunchedEffect(ragModel?.name) {
     ragModel?.let { modelManagerViewModel.selectModel(it) }
@@ -180,6 +182,7 @@ fun VideoSummaryRagScreen(
       ragModel = ragModel,
       visionReady = visionReady,
       ragReady = ragReady,
+      ragEmbeddingDimension = ragEmbeddingDimension,
       uiState = summaryUiState,
       onProcessBatch = { frames ->
         if (visionModel != null && ragModel != null) {

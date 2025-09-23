@@ -35,6 +35,7 @@ fun VideoSummaryRagQuickStart(
   ragModel: Model?,
   visionReady: Boolean,
   ragReady: Boolean,
+  ragEmbeddingDimension: Int?,
   uiState: VideoSummaryRagViewModel.VideoSummaryRagUiState,
   onProcessBatch: (List<Bitmap>) -> Unit,
   modifier: Modifier = Modifier,
@@ -103,6 +104,14 @@ fun VideoSummaryRagQuickStart(
         }
         Text(
           text = "Waiting for ${waitingTargets.joinToString(" and ")} model${if (waitingTargets.size > 1) "s" else ""} to initialize…",
+          style = MaterialTheme.typography.bodySmall,
+          color = MaterialTheme.colorScheme.onPrimaryContainer,
+        )
+      }
+
+      ragEmbeddingDimension?.let { dimension ->
+        Text(
+          text = "Active RAG embedding dimension: $dimension",
           style = MaterialTheme.typography.bodySmall,
           color = MaterialTheme.colorScheme.onPrimaryContainer,
         )
