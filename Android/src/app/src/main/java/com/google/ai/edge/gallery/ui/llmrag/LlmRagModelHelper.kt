@@ -37,8 +37,10 @@ import com.google.ai.edge.localagents.rag.chains.RetrievalAndInferenceChain
 import com.google.ai.edge.localagents.rag.memory.DefaultSemanticTextMemory
 import com.google.ai.edge.localagents.rag.memory.SqliteVectorStore
 import com.google.ai.edge.localagents.rag.models.AsyncProgressListener
+import com.google.ai.edge.localagents.rag.models.EmbedData
 import com.google.ai.edge.localagents.rag.models.Embedder
 import com.google.ai.edge.localagents.rag.models.GeckoEmbeddingModel
+import com.google.ai.edge.localagents.rag.models.EmbeddingRequest
 import com.google.ai.edge.localagents.rag.models.LanguageModelResponse
 import com.google.ai.edge.localagents.rag.models.MediaPipeLlmBackend
 import com.google.ai.edge.localagents.rag.prompt.PromptBuilder
@@ -52,6 +54,7 @@ import kotlinx.coroutines.flow.last
 import kotlinx.coroutines.guava.await
 import kotlin.coroutines.suspendCoroutine
 import kotlin.coroutines.resume
+import java.util.concurrent.TimeUnit
 
 // Real RAG SDK is now available from local source
 
@@ -64,8 +67,16 @@ private const val GECKO_EMBEDDING_MODEL_FILENAME = "Gecko_1024_quant.tflite"
 private const val GECKO_TOKENIZER_FILENAME = "sentencepiece.model"
 
 // RAG configuration constants
-private const val USE_GPU_FOR_EMBEDDINGS = false
-private const val EMBEDDING_DIMENSION = 768
+private fun useGpuForEmbeddings(model: Model): Boolean {
+  val accelerator = model.getStringConfigValue(
+    key = ConfigKeys.ACCELERATOR,
+    defaultValue = Accelerator.GPU.label,
+  )
+  return accelerator == Accelerator.GPU.label
+}
+// IMPORTANT: must match the Gecko embedder model's output dimension.
+// The configured filename defaults to a 1024-dim embedding; probe the runtime value when possible.
+private const val DEFAULT_EMBEDDING_DIMENSION = 1024
 private const val QA_PROMPT_TEMPLATE = """Based on the following context, answer the question.
 
 Context:
@@ -94,7 +105,8 @@ object LlmRagModelHelper {
     try {
       Log.d(TAG, "Initializing RAG model...")
       
-      // First initialize the base LLM model
+      // First initialize the base LLM model - force CPU mode for consistency
+      Log.d(TAG, "Initializing base LLM model with CPU mode")
       LlmChatModelHelper.initialize(
         context = context,
         model = model,
@@ -106,9 +118,15 @@ object LlmRagModelHelper {
             return@initialize
           }
           
+          // Get the already-initialized LLM instance (Gemma3-1T-IT)
+          val llmInstance = model.instance as? LlmModelInstance
+          if (llmInstance == null) {
+            Log.e(TAG, "LLM instance is null, RAG initialization failed")
+            onDone("Failed to initialize RAG: LLM instance is null")
+            return@initialize
+          }
+          
           try {
-            // Get the already-initialized LLM instance (Gemma3-1T-IT)
-            val llmInstance = model.instance as LlmModelInstance
             
             // Create MediaPipe language model wrapper for RAG
             // Note: We need to create options for the RAG backend, but we'll use the model's configuration
@@ -118,15 +136,15 @@ object LlmRagModelHelper {
             val temperature = model.getFloatConfigValue(key = ConfigKeys.TEMPERATURE, defaultValue = DEFAULT_TEMPERATURE)
             val accelerator = model.getStringConfigValue(key = ConfigKeys.ACCELERATOR, defaultValue = Accelerator.GPU.label)
             
-            val preferredBackend = when (accelerator) {
-              Accelerator.CPU.label -> LlmInference.Backend.CPU
-              Accelerator.GPU.label -> LlmInference.Backend.GPU
-              else -> LlmInference.Backend.GPU
-            }
+            // Force CPU mode for RAG initialization to avoid GPU-related issues
+            val preferredBackend = LlmInference.Backend.CPU
+            Log.d(TAG, "Forcing CPU mode for RAG initialization (original accelerator: $accelerator)")
             
             // Create options for the RAG MediaPipe backend using the model's configuration
+            val modelPath = model.getPath(context)
+            Log.d(TAG, "Creating RAG LLM options with model path: $modelPath")
             val ragLlmOptions = LlmInference.LlmInferenceOptions.builder()
-              .setModelPath(model.getPath(context))
+              .setModelPath(modelPath)
               .setMaxTokens(maxTokens)
               .setPreferredBackend(preferredBackend)
               .build()
@@ -135,8 +153,17 @@ object LlmRagModelHelper {
               .setTopP(topP)
               .setTemperature(temperature)
               .build()
-            val mediaPipeLanguageModel = MediaPipeLlmBackend(context, ragLlmOptions, ragSessionOptions)
-            
+            val mediaPipeLanguageModel = try {
+              Log.d(TAG, "Creating MediaPipe LLM backend with CPU mode...")
+              MediaPipeLlmBackend(context, ragLlmOptions, ragSessionOptions)
+            } catch (e: UnsatisfiedLinkError) {
+              Log.w(TAG, "MediaPipe backend native libs missing, RAG chain disabled: ${e.message}")
+              null
+            } catch (e: Exception) {
+              Log.w(TAG, "Failed to create MediaPipe backend, RAG chain disabled: ${e.message}")
+              null
+            }
+
             // Set up embedder (Gecko embedding model - separate from Gemma3-1T-IT LLM)
             val embedder = try {
               // Construct full paths using the app's external files directory
@@ -161,10 +188,12 @@ object LlmRagModelHelper {
                 throw java.io.FileNotFoundException("Tokenizer file not found at: $tokenizerPath")
               }
               
+              val enableGpu = useGpuForEmbeddings(model)
+              Log.d(TAG, "Initializing Gecko embedder (GPU=$enableGpu)")
               GeckoEmbeddingModel(
                 geckoModelPath,
                 Optional.of(tokenizerPath),
-                USE_GPU_FOR_EMBEDDINGS,
+                enableGpu,
               )
             } catch (e: UnsatisfiedLinkError) {
               Log.w(TAG, "Native embedding libraries not available, using fallback: ${e.message}")
@@ -174,13 +203,25 @@ object LlmRagModelHelper {
               null
             }
             
+            // Derive the semantic memory vector store dimension from the embedder when available.
+            val embeddingDimension = if (embedder != null) {
+              determineEmbeddingDimension(embedder)
+            } else {
+              DEFAULT_EMBEDDING_DIMENSION
+            }
+
+            Log.d(TAG, "Using embedding dimension: $embeddingDimension")
+
             // Create semantic memory - only if embedder is available
             val semanticMemory = if (embedder != null) {
               try {
                 DefaultSemanticTextMemory(
-                  SqliteVectorStore(EMBEDDING_DIMENSION),
+                  SqliteVectorStore(embeddingDimension),
                   embedder
                 )
+              } catch (e: UnsatisfiedLinkError) {
+                Log.w(TAG, "Semantic memory native libs missing, using fallback: ${e.message}")
+                null
               } catch (e: Exception) {
                 Log.w(TAG, "Failed to create semantic memory, using fallback: ${e.message}")
                 null
@@ -188,9 +229,9 @@ object LlmRagModelHelper {
             } else {
               null
             }
-            
+
             // Create RAG chain configuration - handle case where semantic memory is null
-            val ragChain = if (semanticMemory != null) {
+            val ragChain = if (semanticMemory != null && mediaPipeLanguageModel != null) {
               try {
                 val config = ChainConfig.create(
                   mediaPipeLanguageModel,
@@ -203,11 +244,16 @@ object LlmRagModelHelper {
                 null
               }
             } else {
-              Log.i(TAG, "No semantic memory available, RAG chain will be disabled")
+              if (semanticMemory == null) {
+                Log.i(TAG, "No semantic memory available, RAG chain will be disabled")
+              } else {
+                Log.i(TAG, "MediaPipe backend unavailable, RAG chain will be disabled")
+              }
               null
             }
             
             // Replace the model instance with our RAG instance
+            Log.d(TAG, "Creating RAG instance with components - LLM: ${llmInstance != null}, RAG Chain: ${ragChain != null}, Embedder: ${embedder != null}, Semantic Memory: ${semanticMemory != null}")
             model.instance = RagModelInstance(
               llmInstance = llmInstance,
               ragChain = ragChain,
@@ -215,12 +261,26 @@ object LlmRagModelHelper {
               semanticMemory = semanticMemory
             )
             
-            Log.d(TAG, "RAG model initialized successfully")
+            Log.d(TAG, "RAG model initialized successfully with CPU mode")
             onDone("")
             
           } catch (e: Exception) {
             Log.e(TAG, "Failed to initialize RAG components: ${e.message}")
-            onDone("Failed to initialize RAG: ${e.message}")
+            // Even if RAG fails, we can still use basic LLM functionality
+            // Create a minimal RagModelInstance with null RAG components
+            try {
+              model.instance = RagModelInstance(
+                llmInstance = llmInstance,
+                ragChain = null,
+                embedder = null,
+                semanticMemory = null
+              )
+              Log.i(TAG, "RAG initialization failed, but basic LLM functionality is available")
+              onDone("") // Don't report as error, just use fallback
+            } catch (e2: Exception) {
+              Log.e(TAG, "Failed to create fallback RAG instance: ${e2.message}")
+              onDone("Failed to initialize RAG: ${e.message}")
+            }
           }
         }
       )
@@ -238,16 +298,51 @@ object LlmRagModelHelper {
     }
 
     try {
-      val ragInstance = model.instance as RagModelInstance
+      // Check if model instance is properly initialized as RagModelInstance
+      val ragInstance = try {
+        model.instance as? RagModelInstance
+      } catch (e: ClassCastException) {
+        Log.w(TAG, "Model instance is not RagModelInstance during cleanup: ${e.message}")
+        null
+      }
       
-      // Clean up the underlying LLM instance
-      model.instance = ragInstance.llmInstance
-      LlmChatModelHelper.cleanUp(model, onDone)
+      if (ragInstance != null) {
+        // Clean up the underlying LLM instance
+        model.instance = ragInstance.llmInstance
+        LlmChatModelHelper.cleanUp(model, onDone)
+      } else {
+        // If RAG instance is not available, clean up the model directly
+        LlmChatModelHelper.cleanUp(model, onDone)
+      }
       
       Log.d(TAG, "RAG model cleanup done.")
     } catch (e: Exception) {
       Log.e(TAG, "Failed to cleanup RAG model: ${e.message}")
       onDone()
+    }
+  }
+
+  private fun determineEmbeddingDimension(embedder: Embedder<String>): Int {
+    return try {
+      val request = EmbeddingRequest.create(
+        ImmutableList.of(
+          EmbedData.create(
+            "dimension_probe",
+            EmbedData.TaskType.SEMANTIC_SIMILARITY,
+          )
+        )
+      )
+
+      val embeddings = embedder.getEmbeddings(request).get(3, TimeUnit.SECONDS)
+      val dimension = embeddings.size
+      if (dimension > 0) dimension else DEFAULT_EMBEDDING_DIMENSION
+    } catch (e: InterruptedException) {
+      Thread.currentThread().interrupt()
+      Log.w(TAG, "Embedding dimension probe interrupted, using default", e)
+      DEFAULT_EMBEDDING_DIMENSION
+    } catch (e: Exception) {
+      Log.w(TAG, "Unable to probe embedding dimension, falling back to default: ${e.message}")
+      DEFAULT_EMBEDDING_DIMENSION
     }
   }
 
@@ -277,21 +372,44 @@ object LlmRagModelHelper {
     source: String = "upload"
   ): String = coroutineScope {
     try {
-      val ragInstance = model.instance as RagModelInstance
+      Log.d(TAG, "Memorizing ${chunks.size} chunks for document '$title'...")
+      Log.d(TAG, "Model: ${model.name}, instance: ${model.instance?.javaClass?.simpleName}")
       
-      Log.d(TAG, "Memorizing ${chunks.size} chunks...")
+      // Check if model instance is properly initialized as RagModelInstance
+      val ragInstance = try {
+        model.instance as? RagModelInstance
+      } catch (e: ClassCastException) {
+        Log.w(TAG, "Model instance is not RagModelInstance, using fallback storage: ${e.message}")
+        null
+      }
       
-      // Use the stored semantic memory to record batched memory items
-      val semanticMemory = ragInstance.semanticMemory
-      
-      if (semanticMemory != null) {
-        try {
-          // Use coroutines to await the ListenableFuture - following official example pattern
-          semanticMemory.recordBatchedMemoryItems(ImmutableList.copyOf(chunks)).await()
-          Log.d(TAG, "Successfully memorized ${chunks.size} chunks using semantic memory")
-          ""
-        } catch (e: Exception) {
-          Log.w(TAG, "Semantic memory failed, using fallback: ${e.message}")
+      if (ragInstance != null) {
+        // Use the stored semantic memory to record batched memory items
+        val semanticMemory = ragInstance.semanticMemory
+        
+        if (semanticMemory != null) {
+          try {
+            // Use coroutines to await the ListenableFuture - following official example pattern
+            semanticMemory.recordBatchedMemoryItems(ImmutableList.copyOf(chunks)).await()
+            Log.d(TAG, "Successfully memorized ${chunks.size} chunks using semantic memory")
+            ""
+          } catch (e: Exception) {
+            Log.w(TAG, "Semantic memory failed, using fallback: ${e.message}")
+            // Fallback to simple in-memory storage
+            val documentId = "doc_${System.currentTimeMillis()}"
+            documentStore[documentId] = chunks
+            documentMetadata[documentId] = DocumentMetadata(
+              id = documentId,
+              title = title,
+              timestamp = System.currentTimeMillis(),
+              chunkCount = chunks.size,
+              source = source
+            )
+            Log.d(TAG, "Successfully memorized ${chunks.size} chunks using fallback storage")
+            ""
+          }
+        } else {
+          Log.i(TAG, "No semantic memory available, using fallback storage")
           // Fallback to simple in-memory storage
           val documentId = "doc_${System.currentTimeMillis()}"
           documentStore[documentId] = chunks
@@ -306,7 +424,8 @@ object LlmRagModelHelper {
           ""
         }
       } else {
-        // Fallback to simple in-memory storage
+        Log.i(TAG, "RAG instance not available, using fallback storage")
+        // Fallback to simple in-memory storage when RAG instance is not available
         val documentId = "doc_${System.currentTimeMillis()}"
         documentStore[documentId] = chunks
         documentMetadata[documentId] = DocumentMetadata(
@@ -332,9 +451,15 @@ object LlmRagModelHelper {
     callback: AsyncProgressListener<LanguageModelResponse>? = null
   ): String = coroutineScope {
     try {
-      val ragInstance = model.instance as RagModelInstance
+      // Check if model instance is properly initialized as RagModelInstance
+      val ragInstance = try {
+        model.instance as? RagModelInstance
+      } catch (e: ClassCastException) {
+        Log.w(TAG, "Model instance is not RagModelInstance, using basic LLM: ${e.message}")
+        null
+      }
       
-      if (ragInstance.ragChain != null) {
+      if (ragInstance?.ragChain != null) {
         try {
           val retrievalRequest = RetrievalRequest.create(
             prompt,
@@ -342,20 +467,98 @@ object LlmRagModelHelper {
           )
           
           // Use coroutines to await the ListenableFuture - following official example pattern
-          ragInstance.ragChain.invoke(retrievalRequest, callback).await().text
+          val resp = ragInstance.ragChain.invoke(retrievalRequest, callback).await()
+          val text = resp.text?.trim() ?: ""
+          // Guard against empty/"null" responses; fall back to local retrieval prompt building.
+          if (text.isEmpty() || text.equals("null", ignoreCase = true)) {
+            Log.w(TAG, "RAG chain returned empty/null text; falling back to keyword retrieval")
+            generateWithFallbackRAG(model, prompt, ragInstance)
+          } else {
+            text
+          }
         } catch (e: Exception) {
           Log.w(TAG, "RAG chain failed, using fallback: ${e.message}")
           // Fall through to fallback implementation
           generateWithFallbackRAG(model, prompt, ragInstance)
         }
-      } else {
+      } else if (ragInstance != null) {
         // Use fallback RAG implementation
         generateWithFallbackRAG(model, prompt, ragInstance)
+      } else {
+        // RAG not available, use basic LLM response with fallback retrieval
+        Log.i(TAG, "RAG instance not available, using basic LLM with fallback retrieval")
+        generateWithBasicLLM(model, prompt)
       }
     } catch (e: Exception) {
       val error = "Failed to generate response: ${e.message}"
       Log.e(TAG, error)
       error
+    }
+  }
+  
+  private suspend fun generateWithBasicLLM(
+    model: Model,
+    prompt: String
+  ): String {
+    Log.i(TAG, "Using basic LLM without RAG")
+    
+    // Simple keyword-based retrieval from stored documents for context
+    val retrievalResult = retrieveRelevantChunks(prompt, maxChunks = 3)
+    
+    val enhancedPrompt = if (retrievalResult.chunks.isNotEmpty()) {
+      val contextInfo = retrievalResult.chunks.joinToString("\n\n") { chunk ->
+        "- $chunk"
+      }
+      Log.d(TAG, "Using enhanced prompt with context from documents: ${retrievalResult.sourceDocuments.joinToString(", ")}")
+      """Based on the following context information, please provide a comprehensive answer to the question:
+
+Context Information:
+$contextInfo
+
+Question: $prompt
+
+Please provide a detailed answer based on the context provided above. If the context doesn't contain relevant information, please state that clearly.
+
+Answer:"""
+    } else {
+      Log.d(TAG, "No relevant context found, using original prompt")
+      prompt
+    }
+    
+    // Generate response using the basic LLM - need to extract the underlying LlmModelInstance
+    return suspendCoroutine { continuation ->
+      val resultBuilder = StringBuilder()
+      
+      try {
+        // Try to get the underlying LLM instance from RAG instance or use model directly
+        val llmModel = try {
+          val ragInstance = model.instance as? RagModelInstance
+          if (ragInstance != null) {
+            // Create a temporary model with the underlying LLM instance
+            Model(name = model.name).apply { instance = ragInstance.llmInstance }
+          } else {
+            model
+          }
+        } catch (e: Exception) {
+          Log.w(TAG, "Failed to extract LLM instance, using model directly: ${e.message}")
+          model
+        }
+        
+        LlmChatModelHelper.runInference(
+          model = llmModel,
+          input = enhancedPrompt,
+          resultListener = { partialResult, done ->
+            resultBuilder.append(partialResult)
+            if (done) {
+              continuation.resume(resultBuilder.toString())
+            }
+          },
+          cleanUpListener = { /* No cleanup needed for this temporary call */ }
+        )
+      } catch (e: Exception) {
+        Log.e(TAG, "Failed to run basic LLM inference: ${e.message}")
+        continuation.resume("Error: Unable to generate response. ${e.message}")
+      }
     }
   }
   
@@ -491,18 +694,34 @@ Answer: I would need more context or documents to be uploaded to provide a speci
 
   fun clearContext(model: Model) {
     try {
-      val ragInstance = model.instance as RagModelInstance
+      // Check if model instance is properly initialized as RagModelInstance
+      val ragInstance = try {
+        model.instance as? RagModelInstance
+      } catch (e: ClassCastException) {
+        Log.w(TAG, "Model instance is not RagModelInstance, clearing fallback storage only: ${e.message}")
+        null
+      }
+      
       // Clear fallback document store
       documentStore.clear()
       documentMetadata.clear()
       Log.d(TAG, "Cleared document store")
       
       // Reset the underlying LLM session
-      LlmChatModelHelper.resetSession(
-        model = Model(name = model.name).apply { instance = ragInstance.llmInstance },
-        supportImage = false,
-        supportAudio = false
-      )
+      if (ragInstance != null) {
+        LlmChatModelHelper.resetSession(
+          model = Model(name = model.name).apply { instance = ragInstance.llmInstance },
+          supportImage = false,
+          supportAudio = false
+        )
+      } else {
+        // If RAG instance is not available, reset the model directly
+        LlmChatModelHelper.resetSession(
+          model = model,
+          supportImage = false,
+          supportAudio = false
+        )
+      }
     } catch (e: Exception) {
       Log.e(TAG, "Failed to clear RAG context: ${e.message}")
     }
