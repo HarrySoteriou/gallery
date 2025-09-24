@@ -468,6 +468,7 @@ constructor(
             BuiltInTaskId.LLM_PROMPT_LAB,
             BuiltInTaskId.VIDEO_ANALYSIS,
             BuiltInTaskId.LLM_RAG,
+            BuiltInTaskId.VIDEO_RAG_ANALYSIS,
           )
       )) {
       // Remove duplicated imported model if existed.
@@ -480,7 +481,8 @@ constructor(
         (task.id == BuiltInTaskId.LLM_ASK_IMAGE && model.llmSupportImage) ||
           (task.id == BuiltInTaskId.LLM_ASK_AUDIO && model.llmSupportAudio) ||
           (task.id == BuiltInTaskId.VIDEO_ANALYSIS && model.llmSupportImage) ||
-          (task.id != BuiltInTaskId.LLM_ASK_IMAGE && task.id != BuiltInTaskId.LLM_ASK_AUDIO && task.id != BuiltInTaskId.VIDEO_ANALYSIS)
+          (task.id == BuiltInTaskId.VIDEO_RAG_ANALYSIS && model.llmSupportImage) ||
+          (task.id != BuiltInTaskId.LLM_ASK_IMAGE && task.id != BuiltInTaskId.LLM_ASK_AUDIO && task.id != BuiltInTaskId.VIDEO_ANALYSIS && task.id != BuiltInTaskId.VIDEO_RAG_ANALYSIS)
       ) {
         task.models.add(model)
       }
@@ -887,6 +889,7 @@ constructor(
       if (model.llmSupportImage) {
         tasks.get(key = BuiltInTaskId.LLM_ASK_IMAGE)?.models?.add(model)
         tasks.get(key = BuiltInTaskId.VIDEO_ANALYSIS)?.models?.add(model)
+        tasks.get(key = BuiltInTaskId.VIDEO_RAG_ANALYSIS)?.models?.add(model)
       }
       if (model.llmSupportAudio) {
         tasks.get(key = BuiltInTaskId.LLM_ASK_AUDIO)?.models?.add(model)

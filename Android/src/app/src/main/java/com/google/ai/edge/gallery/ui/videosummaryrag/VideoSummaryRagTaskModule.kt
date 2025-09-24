@@ -1,3 +1,19 @@
+/*
+ * Copyright 2025 Google LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package com.google.ai.edge.gallery.ui.videosummaryrag
 
 import android.content.Context
@@ -11,6 +27,7 @@ import com.google.ai.edge.gallery.data.BuiltInTaskId
 import com.google.ai.edge.gallery.data.Category
 import com.google.ai.edge.gallery.data.Model
 import com.google.ai.edge.gallery.data.Task
+import com.google.ai.edge.gallery.data.TaskCapabilities
 import com.google.ai.edge.gallery.ui.llmchat.LlmChatModelHelper
 import dagger.Module
 import dagger.Provides
@@ -28,9 +45,10 @@ class VideoSummaryRagTask @Inject constructor() : CustomTask {
       category = Category.LLM,
       icon = Icons.Default.Movie,
       models = mutableListOf(),
-      description = "Capture frames, summarise them with a vision-language model, and query stored batches using retrieval-augmented chat.",
+      description = "Capture and analyze video frames with automatic embedding in RAG knowledge base for later queries.",
       docUrl = "https://ai.google.dev/edge/mediapipe/solutions/genai/rag/android",
-      sourceCodeUrl = "https://github.com/google-ai-edge/gallery",
+      sourceCodeUrl =
+        "https://github.com/google-ai-edge/gallery/blob/main/Android/src/app/src/main/java/com/google/ai/edge/gallery/ui/videosummaryrag/VideoSummaryRagTaskModule.kt",
       textInputPlaceHolderRes = R.string.text_input_placeholder_llm_chat,
     )
 
@@ -45,7 +63,7 @@ class VideoSummaryRagTask @Inject constructor() : CustomTask {
       model = model,
       supportImage = true,
       supportAudio = false,
-      onDone = onDone,
+      onDone = onDone
     )
   }
 
@@ -58,12 +76,27 @@ class VideoSummaryRagTask @Inject constructor() : CustomTask {
     LlmChatModelHelper.cleanUp(model = model, onDone = onDone)
   }
 
+  /**
+   * Clears the model's context memory for new batch processing.
+   * This reuses the same logic as VideoAnalysis for consistency.
+   */
+  fun clearContextForNewBatch(model: Model) {
+    val supportImage = TaskCapabilities.getImageSupport(task, model)
+    val supportAudio = TaskCapabilities.getAudioSupport(task, model)
+
+    LlmChatModelHelper.resetSession(
+      model = model,
+      supportImage = supportImage,
+      supportAudio = supportAudio,
+    )
+  }
+
   @Composable
   override fun MainScreen(data: Any) {
-    val taskData = data as CustomTaskDataForBuiltinTask
+    val myData = data as CustomTaskDataForBuiltinTask
     VideoSummaryRagScreen(
-      modelManagerViewModel = taskData.modelManagerViewModel,
-      navigateUp = taskData.onNavUp,
+      modelManagerViewModel = myData.modelManagerViewModel,
+      navigateUp = myData.onNavUp,
     )
   }
 }

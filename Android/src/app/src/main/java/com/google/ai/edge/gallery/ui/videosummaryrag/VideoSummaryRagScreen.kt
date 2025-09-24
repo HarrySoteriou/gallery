@@ -1,305 +1,221 @@
+/*
+ * Copyright 2025 Google LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package com.google.ai.edge.gallery.ui.videosummaryrag
 
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowDropDown
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Text
+import android.graphics.Bitmap
+import android.util.Log
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.dp
+import androidx.core.os.bundleOf
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.google.ai.edge.gallery.data.BuiltInTaskId
-import com.google.ai.edge.gallery.data.Model
-import com.google.ai.edge.gallery.data.ModelDownloadStatusType
-import com.google.ai.edge.gallery.data.Task
-import com.google.ai.edge.gallery.ui.common.chat.ChatMessageText
+import com.google.ai.edge.gallery.firebaseAnalytics
 import com.google.ai.edge.gallery.ui.common.chat.ChatView
-import com.google.ai.edge.gallery.ui.common.chat.ChatInputType
+import com.google.ai.edge.gallery.ui.common.chat.ChatMessageText
+import com.google.ai.edge.gallery.ui.common.chat.ChatMessageImage
+import com.google.ai.edge.gallery.ui.common.chat.ChatSide
+import com.google.ai.edge.gallery.ui.llmchat.LlmAskImageViewModel
+import com.google.ai.edge.gallery.ui.llmchat.LlmChatViewModelBase
 import com.google.ai.edge.gallery.ui.llmrag.LlmRagModelHelper
-import com.google.ai.edge.gallery.ui.llmrag.LlmRagViewModel
-import com.google.ai.edge.gallery.ui.modelmanager.ModelInitializationStatusType
+import com.google.ai.edge.gallery.ui.llmrag.RagModelInstance
+import com.google.ai.edge.gallery.ui.videoanalysis.VideoAnalysisMemoryManager
 import com.google.ai.edge.gallery.ui.modelmanager.ModelManagerViewModel
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 @Composable
 fun VideoSummaryRagScreen(
   modelManagerViewModel: ModelManagerViewModel,
   navigateUp: () -> Unit,
   modifier: Modifier = Modifier,
-  viewModel: VideoSummaryRagViewModel = hiltViewModel(),
-  ragChatViewModel: LlmRagViewModel = hiltViewModel(),
+  viewModel: LlmAskImageViewModel = hiltViewModel(),
+) {
+  VideoSummaryRagChatViewWrapper(
+    viewModel = viewModel,
+    modelManagerViewModel = modelManagerViewModel,
+    taskId = BuiltInTaskId.VIDEO_RAG_ANALYSIS,
+    navigateUp = navigateUp,
+    modifier = modifier,
+  )
+}
+
+@Composable
+fun VideoSummaryRagChatViewWrapper(
+  viewModel: LlmChatViewModelBase,
+  modelManagerViewModel: ModelManagerViewModel,
+  taskId: String,
+  navigateUp: () -> Unit,
+  modifier: Modifier = Modifier,
 ) {
   val context = LocalContext.current
-  val managerState by modelManagerViewModel.uiState.collectAsStateWithLifecycle()
-  val summaryUiState by viewModel.uiState.collectAsStateWithLifecycle()
+  val task = modelManagerViewModel.getTaskById(id = taskId)!!
+  val ragTask = modelManagerViewModel.getTaskById(id = BuiltInTaskId.LLM_RAG)!!
+  val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
+  // Automatically load Gecko embedding model for RAG functionality
   LaunchedEffect(Unit) {
     modelManagerViewModel.loadModelAllowlistWhenNeeded()
-    viewModel.refreshHistory()
-  }
-
-  val videoTask = modelManagerViewModel.getTaskById(BuiltInTaskId.VIDEO_RAG_ANALYSIS)
-  val ragTask = modelManagerViewModel.getTaskById(BuiltInTaskId.LLM_RAG)
-
-  if (videoTask == null || ragTask == null) {
-    Column(modifier = modifier.padding(16.dp)) {
-      Text(text = "Video Summary + RAG configuration is unavailable.")
-    }
-    return
-  }
-
-  val visionModels = remember(managerState.tasks) { videoTask.models.toList() }
-  val ragModels = remember(managerState.tasks) { ragTask.models.toList() }
-
-  var selectedVisionModelName by remember(visionModels) {
-    mutableStateOf(visionModels.firstOrNull()?.name ?: "")
-  }
-  if ((selectedVisionModelName.isEmpty() || visionModels.none { it.name == selectedVisionModelName }) &&
-    visionModels.isNotEmpty()
-  ) {
-    selectedVisionModelName = visionModels.first().name
-  }
-
-  var selectedRagModelName by remember(ragModels) {
-    mutableStateOf(ragModels.firstOrNull()?.name ?: "")
-  }
-  if ((selectedRagModelName.isEmpty() || ragModels.none { it.name == selectedRagModelName }) &&
-    ragModels.isNotEmpty()
-  ) {
-    selectedRagModelName = ragModels.first().name
-  }
-
-  val visionModel = modelManagerViewModel.getModelByName(selectedVisionModelName)
-  val ragModel = modelManagerViewModel.getModelByName(selectedRagModelName)
-  val ragEmbeddingDimension = ragModel?.let { LlmRagModelHelper.getResolvedEmbeddingDimension(it) }
-
-  LaunchedEffect(ragModel?.name) {
-    ragModel?.let { modelManagerViewModel.selectModel(it) }
-  }
-
-  val visionDownloadStatus = visionModel?.let { managerState.modelDownloadStatus[it.name] }
-  val ragDownloadStatus = ragModel?.let { managerState.modelDownloadStatus[it.name] }
-
-  fun shouldAutoInitialize(
-    model: Model?,
-    downloadStatus: ModelDownloadStatusType?,
-    initializationStatus: ModelInitializationStatusType?
-  ): Boolean {
-    if (model == null) return false
-    if (initializationStatus == ModelInitializationStatusType.INITIALIZED ||
-      initializationStatus == ModelInitializationStatusType.INITIALIZING
-    ) {
-      return false
-    }
-    if (downloadStatus == ModelDownloadStatusType.SUCCEEDED) return true
-    if (model.localFileRelativeDirPathOverride.isNotEmpty()) return true
-    if (model.imported) return true
-    return false
-  }
-
-  LaunchedEffect(visionDownloadStatus?.status, visionModel?.name) {
-    val status = visionDownloadStatus?.status
-    val initStatus = visionModel?.let { managerState.modelInitializationStatus[it.name]?.status }
-    if (shouldAutoInitialize(visionModel, status, initStatus)) {
-      modelManagerViewModel.initializeModel(context, videoTask, visionModel!!)
+    val geckoModel = ragTask.models.find { it.name == "Gecko-1024-Embedding" }
+    if (geckoModel != null) {
+      Log.d("VideoSummaryRagScreen", "Auto-initializing Gecko embedding model for RAG")
+      modelManagerViewModel.initializeModel(context, ragTask, geckoModel)
     }
   }
 
-  LaunchedEffect(ragDownloadStatus?.status, ragModel?.name) {
-    val status = ragDownloadStatus?.status
-    val initStatus = ragModel?.let { managerState.modelInitializationStatus[it.name]?.status }
-    if (shouldAutoInitialize(ragModel, status, initStatus)) {
-      modelManagerViewModel.initializeModel(context, ragTask, ragModel!!)
-    }
-  }
+  // Monitor for completed responses and embed them in RAG
+  LaunchedEffect(uiState.messagesByModel, uiState.inProgress) {
+    if (!uiState.inProgress) {
+      val selectedModel = modelManagerViewModel.uiState.value.selectedModel
+      val messages = uiState.messagesByModel[selectedModel.name] ?: emptyList()
 
-  LaunchedEffect(Unit) {
-    viewModel.memorizationEvents.collect {
-      ragChatViewModel.refreshStoredDocuments()
-    }
-  }
+      if (messages.isNotEmpty()) {
+        val lastMessage = messages.lastOrNull()
+        if (lastMessage is ChatMessageText &&
+            lastMessage.side == ChatSide.AGENT &&
+            lastMessage.content.isNotEmpty()) {
 
-  val scrollState = rememberScrollState()
-
-  Column(
-    modifier = modifier
-      .fillMaxSize()
-      .verticalScroll(scrollState)
-      .padding(16.dp),
-    verticalArrangement = Arrangement.spacedBy(24.dp),
-  ) {
-    Text(
-      text = "Video Summary + RAG",
-      style = MaterialTheme.typography.headlineSmall,
-    )
-    Text(
-      text = "Capture short clips, summarise them with a vision-language model, and query the stored knowledge via RAG chat.",
-      style = MaterialTheme.typography.bodyMedium,
-    )
-
-    ModelSelectorSection(
-      title = "Vision Model",
-      models = visionModels,
-      selectedName = selectedVisionModelName,
-      onModelSelected = { selectedVisionModelName = it },
-    )
-    ModelSelectorSection(
-      title = "RAG Model",
-      models = ragModels,
-      selectedName = selectedRagModelName,
-      onModelSelected = { selectedRagModelName = it },
-    )
-
-    val visionReady = visionModel?.let { model ->
-      managerState.modelInitializationStatus[model.name]?.status == ModelInitializationStatusType.INITIALIZED
-    } ?: false
-    val ragReady = ragModel?.let { model ->
-      managerState.modelInitializationStatus[model.name]?.status == ModelInitializationStatusType.INITIALIZED
-    } ?: false
-
-    VideoSummaryRagQuickStart(
-      visionModel = visionModel,
-      ragModel = ragModel,
-      visionReady = visionReady,
-      ragReady = ragReady,
-      ragEmbeddingDimension = ragEmbeddingDimension,
-      uiState = summaryUiState,
-      onProcessBatch = { frames ->
-        if (visionModel != null && ragModel != null) {
-          viewModel.processBatch(
-            task = videoTask,
-            model = visionModel,
+          // Embed the response in RAG knowledge base
+          embedResponseInRAG(
             ragTask = ragTask,
-            ragModel = ragModel,
-            frames = frames,
+            responseText = lastMessage.content,
+            visionModel = selectedModel
           )
         }
-      },
-    )
-
-    Text(text = "Stored batches", style = MaterialTheme.typography.titleMedium)
-    VideoBatchHistory(history = summaryUiState.history)
-
-    HorizontalDivider()
-
-    ragModel?.let {
-      VideoSummaryRagChatView(
-        task = ragTask,
-        modelManagerViewModel = modelManagerViewModel,
-        navigateUp = navigateUp,
-        viewModel = ragChatViewModel,
-      )
-    }
-  }
-}
-
-@Composable
-private fun ModelSelectorSection(
-  title: String,
-  models: List<Model>,
-  selectedName: String,
-  onModelSelected: (String) -> Unit,
-) {
-  Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-    Text(text = title, style = MaterialTheme.typography.labelLarge)
-    ModelDropdown(models = models, selectedName = selectedName, onModelSelected = onModelSelected)
-  }
-}
-
-@Composable
-private fun ModelDropdown(
-  models: List<Model>,
-  selectedName: String,
-  onModelSelected: (String) -> Unit,
-) {
-  var expanded by remember { mutableStateOf(false) }
-  val selectedModel = models.firstOrNull { it.name == selectedName }
-  val label = selectedModel?.name ?: selectedName
-  val interactionSource = remember { MutableInteractionSource() }
-
-  androidx.compose.foundation.layout.Box {
-    OutlinedTextField(
-      value = label,
-      onValueChange = {},
-      readOnly = true,
-      label = { Text("Select model") },
-      trailingIcon = {
-        Icon(
-          imageVector = Icons.Default.ArrowDropDown,
-          contentDescription = null,
-        )
-      },
-      modifier = Modifier
-        .fillMaxWidth()
-        .clickable(
-          interactionSource = interactionSource,
-          indication = null,
-        ) { expanded = !expanded },
-      interactionSource = interactionSource,
-    )
-
-    DropdownMenu(
-      expanded = expanded,
-      onDismissRequest = { expanded = false },
-    ) {
-      models.forEach { model ->
-        DropdownMenuItem(
-          text = { Text(model.name) },
-          onClick = {
-            onModelSelected(model.name)
-            expanded = false
-          },
-        )
       }
     }
   }
+
+  ChatView(
+    task = task,
+    viewModel = viewModel,
+    modelManagerViewModel = modelManagerViewModel,
+    onSendMessage = { model, messages ->
+      for (message in messages) {
+        viewModel.addMessage(model = model, message = message)
+      }
+
+      var text = ""
+      val images: MutableList<Bitmap> = mutableListOf()
+      var chatMessageText: ChatMessageText? = null
+      for (message in messages) {
+        if (message is ChatMessageText) {
+          chatMessageText = message
+          text = message.content
+        } else if (message is ChatMessageImage) {
+          images.addAll(message.bitmaps)
+        }
+      }
+      if (text.isNotEmpty() && chatMessageText != null) {
+        modelManagerViewModel.addTextInputHistory(text)
+        viewModel.generateResponse(
+          model = model,
+          input = text,
+          images = images,
+          onError = {
+            viewModel.handleError(
+              context = context,
+              task = task,
+              model = model,
+              modelManagerViewModel = modelManagerViewModel,
+              triggeredMessage = chatMessageText,
+            )
+          },
+        )
+
+        firebaseAnalytics?.logEvent(
+          "generate_action",
+          bundleOf("capability_name" to task.id, "model_id" to model.name),
+        )
+      }
+    },
+    onRunAgainClicked = { model, message ->
+      if (message is ChatMessageText) {
+        viewModel.runAgain(
+          model = model,
+          message = message,
+          onError = {
+            viewModel.handleError(
+              context = context,
+              task = task,
+              model = model,
+              modelManagerViewModel = modelManagerViewModel,
+              triggeredMessage = message,
+            )
+          },
+        )
+      }
+    },
+    onBenchmarkClicked = { _, _, _, _ -> },
+    onResetSessionClicked = { model -> viewModel.resetSession(task = task, model = model) },
+    showStopButtonInInputWhenInProgress = true,
+    onStopButtonClicked = { model -> viewModel.stopResponse(model = model) },
+    navigateUp = navigateUp,
+    modifier = modifier,
+  )
 }
 
-@Composable
-private fun VideoSummaryRagChatView(
-  task: Task,
-  modelManagerViewModel: ModelManagerViewModel,
-  navigateUp: () -> Unit,
-  viewModel: LlmRagViewModel,
+private fun embedResponseInRAG(
+  ragTask: com.google.ai.edge.gallery.data.Task,
+  responseText: String,
+  visionModel: com.google.ai.edge.gallery.data.Model
 ) {
-  Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-    Text(text = "RAG Chat", style = MaterialTheme.typography.titleMedium)
-    ChatView(
-      task = task,
-      viewModel = viewModel,
-      modelManagerViewModel = modelManagerViewModel,
-      onSendMessage = { model, messages ->
-        val textMessages = messages.filterIsInstance<ChatMessageText>()
-        if (textMessages.isNotEmpty()) {
-          val content = textMessages.map { it.content }
-          viewModel.sendMessage(model, content)
+  CoroutineScope(Dispatchers.IO).launch {
+    try {
+      // Find the RAG embedding model (Gecko)
+      val ragModel = ragTask.models.find {
+        it.name.contains("Gecko") && it.name.contains("Embedding")
+      }
+
+      if (ragModel?.instance is RagModelInstance && responseText.isNotEmpty()) {
+        // Embed the response text in the RAG knowledge base
+        val title = "Video Summary - ${System.currentTimeMillis()}"
+        val result = LlmRagModelHelper.memorizeChunks(
+          model = ragModel,
+          chunks = listOf("Video summary description:\n$responseText"),
+          title = title,
+          source = "video_summary"
+        )
+
+        if (result.isEmpty()) {
+          Log.d("VideoSummaryRagScreen", "Successfully embedded video summary in RAG knowledge base")
+
+          // Clear the chat memory to keep it fresh for next video analysis
+          val videoTask = com.google.ai.edge.gallery.data.Task(
+            id = BuiltInTaskId.VIDEO_RAG_ANALYSIS,
+            label = "",
+            category = com.google.ai.edge.gallery.data.Category.LLM,
+            description = "",
+            models = mutableListOf()
+          )
+          VideoAnalysisMemoryManager.clearContextForNewBatch(videoTask, visionModel)
+
+        } else {
+          Log.e("VideoSummaryRagScreen", "Failed to embed in RAG: $result")
         }
-      },
-      onRunAgainClicked = { _, _ -> },
-      onBenchmarkClicked = { _, _, _, _ -> },
-      onResetSessionClicked = { model -> viewModel.clearAllRagMessages(model) },
-      navigateUp = navigateUp,
-      chatInputType = ChatInputType.RAG,
-    )
+      } else {
+        Log.w("VideoSummaryRagScreen", "RAG embedding model not found or not initialized")
+      }
+    } catch (e: Exception) {
+      Log.e("VideoSummaryRagScreen", "Failed to embed response in RAG", e)
+    }
   }
 }
