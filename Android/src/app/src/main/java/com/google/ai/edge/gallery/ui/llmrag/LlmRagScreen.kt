@@ -98,6 +98,18 @@ fun LlmRagScreen(
   // Trigger model allowlist loading - this ensures models are loaded before accessing them
   LaunchedEffect(Unit) {
     modelManagerViewModel.loadModelAllowlistWhenNeeded()
+
+    // Automatically load Gecko embedding model for RAG functionality
+    // This is separate from LLM model selection and runs in background
+    val ragTask = modelManagerViewModel.getTaskById(BuiltInTaskId.LLM_RAG)
+    val geckoModel = ragTask?.models?.find { it.name == "Gecko-1024-Embedding" }
+    if (geckoModel != null && ragTask != null) {
+      Log.d("LlmRagScreen", "Auto-initializing Gecko embedding model for RAG")
+      modelManagerViewModel.initializeModel(context, ragTask, geckoModel)
+    } else {
+      Log.w("LlmRagScreen", "Gecko embedding model not found for auto-initialization")
+    }
+
     // Also refresh documents when screen loads
     viewModel.refreshStoredDocuments()
   }

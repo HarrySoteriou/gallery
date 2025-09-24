@@ -23,7 +23,6 @@ plugins {
   alias(libs.plugins.kotlin.android)
   alias(libs.plugins.kotlin.compose)
   alias(libs.plugins.kotlin.serialization)
-  alias(libs.plugins.protobuf)
   alias(libs.plugins.hilt.application)
   alias(libs.plugins.oss.licenses)
   kotlin("kapt")
@@ -63,7 +62,14 @@ android {
   buildFeatures {
     compose = true
     buildConfig = true
+    viewBinding = true
   }
+  dependenciesInfo {
+    includeInApk = true
+    includeInBundle = true
+  }
+  buildToolsVersion = "36.0.0"
+  ndkVersion = "29.0.13846066 rc3"
 }
 
 kotlin {
@@ -96,8 +102,8 @@ dependencies {
   implementation(libs.mediapipe.tasks.imagegen)
   // RAG SDK dependencies - using official Maven artifact
   implementation("com.google.ai.edge.localagents:localagents-rag:0.3.0")
-  implementation("com.google.guava:guava:33.3.1-android")
-  implementation("org.jetbrains.kotlinx:kotlinx-coroutines-guava:1.10.2")
+  implementation(libs.guava)
+  implementation(libs.kotlinx.coroutines.guava)
   implementation(libs.commonmark)
   implementation(libs.richtext)
   implementation(libs.tflite)
@@ -109,7 +115,6 @@ dependencies {
   implementation(libs.camerax.view)
   implementation(libs.openid.appauth)
   implementation(libs.androidx.splashscreen)
-  implementation(libs.protobuf.javalite)
   implementation(libs.hilt.android)
   implementation(libs.hilt.navigation.compose)
   implementation(libs.play.services.oss.licenses)
@@ -129,9 +134,4 @@ dependencies {
 
 kapt {
   includeCompileClasspath = false
-}
-
-protobuf {
-  protoc { artifact = "com.google.protobuf:protoc:4.26.1" }
-  generateProtoTasks { all().forEach { it.plugins { create("java") { option("lite") } } } }
 }
