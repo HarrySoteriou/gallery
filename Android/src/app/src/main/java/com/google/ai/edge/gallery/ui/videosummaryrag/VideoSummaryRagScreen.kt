@@ -81,7 +81,7 @@ fun VideoSummaryRagChatViewWrapper(
     }
   }
 
-  // Monitor for completed responses and embed them in RAG
+  // Monitor for completed batch responses and process them for RAG storage
   LaunchedEffect(uiState.messagesByModel, uiState.inProgress) {
     if (!uiState.inProgress) {
       val selectedModel = modelManagerViewModel.uiState.value.selectedModel
@@ -93,11 +93,13 @@ fun VideoSummaryRagChatViewWrapper(
             lastMessage.side == ChatSide.AGENT &&
             lastMessage.content.isNotEmpty()) {
 
-          // Embed the response in RAG knowledge base
-          embedResponseInRAG(
+          // Complete batch workflow: Store → Embed → Clear
+          processBatchForRAG(
             ragTask = ragTask,
-            responseText = lastMessage.content,
-            visionModel = selectedModel
+            batchDescription = lastMessage.content,
+            visionModel = selectedModel,
+            task = task,
+            viewModel = viewModel
           )
         }
       }
@@ -124,6 +126,14 @@ fun VideoSummaryRagChatViewWrapper(
           images.addAll(message.bitmaps)
         }
       }
+
+      // Auto-inject VideoAnalysis prompt when images are provided (for batch processing)
+      if (images.isNotEmpty() && text.isEmpty()) {
+        text = buildVideoAnalysisPrompt()
+        chatMessageText = ChatMessageText(content = text, side = ChatSide.USER)
+        viewModel.addMessage(model = model, message = chatMessageText)
+      }
+
       if (text.isNotEmpty() && chatMessageText != null) {
         modelManagerViewModel.addTextInputHistory(text)
         viewModel.generateResponse(
@@ -173,10 +183,18 @@ fun VideoSummaryRagChatViewWrapper(
   )
 }
 
-private fun embedResponseInRAG(
+/**
+ * Complete batch processing workflow for VideoSummaryRAG:
+ * 1. Store description in RAG knowledge base
+ * 2. Embed for searchability
+ * 3. Clear VLM context for next batch
+ */
+private fun processBatchForRAG(
   ragTask: com.google.ai.edge.gallery.data.Task,
-  responseText: String,
-  visionModel: com.google.ai.edge.gallery.data.Model
+  batchDescription: String,
+  visionModel: com.google.ai.edge.gallery.data.Model,
+  task: com.google.ai.edge.gallery.data.Task,
+  viewModel: LlmAskImageViewModel
 ) {
   CoroutineScope(Dispatchers.IO).launch {
     try {
@@ -185,37 +203,55 @@ private fun embedResponseInRAG(
         it.name.contains("Gecko") && it.name.contains("Embedding")
       }
 
-      if (ragModel?.instance is RagModelInstance && responseText.isNotEmpty()) {
-        // Embed the response text in the RAG knowledge base
-        val title = "Video Summary - ${System.currentTimeMillis()}"
+      if (ragModel?.instance is RagModelInstance && batchDescription.isNotEmpty()) {
+        // Step 1: Store the batch description in RAG knowledge base
+        val batchId = System.currentTimeMillis()
+        val title = "Video Batch Analysis - $batchId"
+        val documentContent = "Video analysis batch:\n$batchDescription"
+
         val result = LlmRagModelHelper.memorizeChunks(
           model = ragModel,
-          chunks = listOf("Video summary description:\n$responseText"),
+          chunks = listOf(documentContent),
           title = title,
-          source = "video_summary"
+          source = "video_batch_analysis"
         )
 
         if (result.isEmpty()) {
-          Log.d("VideoSummaryRagScreen", "Successfully embedded video summary in RAG knowledge base")
+          Log.d("VideoSummaryRagScreen", "Successfully stored batch description in RAG: $title")
 
-          // Clear the chat memory to keep it fresh for next video analysis
-          val videoTask = com.google.ai.edge.gallery.data.Task(
-            id = BuiltInTaskId.VIDEO_RAG_ANALYSIS,
-            label = "",
-            category = com.google.ai.edge.gallery.data.Category.LLM,
-            description = "",
-            models = mutableListOf()
-          )
-          VideoAnalysisMemoryManager.clearContextForNewBatch(videoTask, visionModel)
+          // Step 2: Clear VLM context for next batch (like VideoAnalysis does)
+          VideoAnalysisMemoryManager.clearContextForNewBatch(task, visionModel)
 
+          // Step 3: Clear chat UI for next batch
+          viewModel.clearAllMessages(visionModel)
+
+          Log.d("VideoSummaryRagScreen", "Cleared context for new batch - ready for next video analysis")
         } else {
-          Log.e("VideoSummaryRagScreen", "Failed to embed in RAG: $result")
+          Log.e("VideoSummaryRagScreen", "Failed to store batch in RAG: $result")
         }
       } else {
         Log.w("VideoSummaryRagScreen", "RAG embedding model not found or not initialized")
       }
     } catch (e: Exception) {
-      Log.e("VideoSummaryRagScreen", "Failed to embed response in RAG", e)
+      Log.e("VideoSummaryRagScreen", "Failed to process batch for RAG", e)
     }
   }
+}
+
+/**
+ * Uses the exact same prompt as VideoAnalysis task for consistent batch descriptions
+ */
+private fun buildVideoAnalysisPrompt(): String {
+  return """
+    Analyze the following sequence of video frames and identify people. Respond in JSON format:
+    {
+      "detected_objects": [
+        {
+          "name": "object_name",
+          "description": "Concise description of the object",
+        }
+      ],
+    }
+  "scene_description": "Description of the overall scene"
+  """.trimIndent()
 }
