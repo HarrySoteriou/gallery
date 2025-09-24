@@ -41,7 +41,8 @@ import com.google.ai.edge.gallery.R
 import com.google.ai.edge.gallery.firebaseAnalytics
 import com.google.ai.edge.gallery.worker.DownloadWorker
 import java.util.UUID
-import java.util.concurrent.Executors
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.asExecutor
 
 private const val TAG = "AGDownloadRepository"
 private const val MODEL_NAME_TAG = "modelName"
@@ -153,7 +154,7 @@ class DefaultDownloadRepository(
     workManager
       .cancelAllWork()
       .result
-      .addListener({ onComplete() }, Executors.newSingleThreadExecutor())
+      .addListener({ onComplete() }, Dispatchers.Default.asExecutor())
   }
 
   override fun observerWorkerProgress(

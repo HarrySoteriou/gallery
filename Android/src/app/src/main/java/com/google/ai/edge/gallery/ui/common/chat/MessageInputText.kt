@@ -122,10 +122,10 @@ import com.google.ai.edge.gallery.data.MAX_IMAGE_COUNT
 import com.google.ai.edge.gallery.data.SAMPLE_RATE
 import com.google.ai.edge.gallery.ui.modelmanager.ModelManagerViewModel
 import com.google.ai.edge.gallery.ui.theme.bodyLargeNarrow
-import java.util.concurrent.Executors
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.asExecutor
 import kotlin.math.max
 import kotlin.math.roundToInt
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 private const val TAG = "AGMessageInputText"
@@ -618,7 +618,7 @@ fun MessageInputText(
       var cameraControl by remember { mutableStateOf<CameraControl?>(null) }
       val localContext = LocalContext.current
       var cameraSide by remember { mutableIntStateOf(CameraSelector.LENS_FACING_BACK) }
-      val executor = remember { Executors.newSingleThreadExecutor() }
+      val captureExecutor = remember { Dispatchers.Default.asExecutor() }
 
       fun rebindCameraProvider() {
         cameraProvider?.let { cameraProvider ->
@@ -649,9 +649,7 @@ fun MessageInputText(
       DisposableEffect(Unit) { // Or key on lifecycleOwner if it makes more sense
         onDispose {
           cameraProvider?.unbindAll() // Unbind all use cases from the camera provider
-          if (!executor.isShutdown) {
-            executor.shutdown() // Shut down the executor service
-          }
+          // No executor shutdown needed when using coroutine-backed executor
         }
       }
 
@@ -722,7 +720,7 @@ fun MessageInputText(
                   }
                 }
               }
-            imageCaptureUseCase.takePicture(executor, callback)
+            imageCaptureUseCase.takePicture(captureExecutor, callback)
           },
         ) {
           Icon(

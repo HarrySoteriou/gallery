@@ -55,7 +55,8 @@ import androidx.compose.ui.unit.IntSize
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.compose.LocalLifecycleOwner
-import java.util.concurrent.Executors
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.asExecutor
 import kotlinx.coroutines.launch
 
 @Composable
@@ -188,7 +189,7 @@ private suspend fun startCamera(
       .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
       .build()
       .also {
-        it.setAnalyzer(Executors.newSingleThreadExecutor()) { imageProxy ->
+        it.setAnalyzer(Dispatchers.Default.asExecutor()) { imageProxy ->
           var bitmap = imageProxy.toBitmap()
           val rotation = imageProxy.imageInfo.rotationDegrees
           val matrix = Matrix()
