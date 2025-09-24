@@ -96,7 +96,7 @@ fun DocumentBrowserDialog(
           }
         }
         
-        Divider()
+        HorizontalDivider()
         
         // Content
         if (isLoading) {

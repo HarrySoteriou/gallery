@@ -127,10 +127,11 @@ object LlmRagModelHelper {
             return@initialize
           }
           
+          var embeddingDimension = DEFAULT_EMBEDDING_DIMENSION
+
           try {
-            
-            // Create MediaPipe language model wrapper for RAG
-            // Note: We need to create options for the RAG backend, but we'll use the model's configuration
+           // Create MediaPipe language model wrapper for RAG
+           // Note: We need to create options for the RAG backend, but we'll use the model's configuration
             val maxTokens = model.getIntConfigValue(key = ConfigKeys.MAX_TOKENS, defaultValue = DEFAULT_MAX_TOKEN)
             val topK = model.getIntConfigValue(key = ConfigKeys.TOPK, defaultValue = DEFAULT_TOPK)
             val topP = model.getFloatConfigValue(key = ConfigKeys.TOPP, defaultValue = DEFAULT_TOPP)
@@ -164,9 +165,6 @@ object LlmRagModelHelper {
               Log.w(TAG, "Failed to create MediaPipe backend, RAG chain disabled: ${e.message}")
               null
             }
-
-            var embeddingDimension = DEFAULT_EMBEDDING_DIMENSION
-
             // Set up embedder (Gecko embedding model - separate from Gemma3-1T-IT LLM)
             val embedder = try {
               // Construct full paths using the app's external files directory

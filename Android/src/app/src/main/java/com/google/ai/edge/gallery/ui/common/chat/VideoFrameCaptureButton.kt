@@ -21,63 +21,70 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.graphics.ImageFormat
 import android.graphics.Matrix
-import android.graphics.Rect
-import android.graphics.YuvImage
-import android.hardware.Camera
 import android.util.Log
 import android.view.Surface
-import android.view.SurfaceHolder
-import android.view.SurfaceView
-import android.view.WindowManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.*
+import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageCapture
+import androidx.camera.core.ImageCaptureException
+import androidx.camera.core.Preview
+import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.view.PreviewView
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.filled.Stop
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.filled.Videocam
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Text
+import androidx.compose.material3.Button
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.core.content.ContextCompat
+import androidx.exifinterface.media.ExifInterface
+import java.io.File
+import java.io.IOException
+import kotlin.coroutines.resume
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import java.io.ByteArrayOutputStream
+import kotlinx.coroutines.suspendCancellableCoroutine
 
 private const val TAG = "VideoFrameCaptureButton"
-
-/**
- * Calculate the correct camera display orientation based on device rotation and camera info.
- */
-private fun getCameraDisplayOrientation(context: Context, cameraId: Int): Int {
-  val cameraInfo = Camera.CameraInfo()
-  Camera.getCameraInfo(cameraId, cameraInfo)
-  
-  val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
-  val rotation = windowManager.defaultDisplay.rotation
-  
-  val degrees = when (rotation) {
-    Surface.ROTATION_0 -> 0
-    Surface.ROTATION_90 -> 90
-    Surface.ROTATION_180 -> 180
-    Surface.ROTATION_270 -> 270
-    else -> 0
-  }
-  
-  return if (cameraInfo.facing == Camera.CameraInfo.CAMERA_FACING_FRONT) {
-    val result = (cameraInfo.orientation + degrees) % 360
-    (360 - result) % 360 // compensate for mirror
-  } else {
-    // back-facing camera
-    (cameraInfo.orientation - degrees + 360) % 360
-  }
-}
+private const val MAX_FRAMES_DEFAULT = 5
+private const val CAPTURE_INTERVAL_MS = 1000L
 
 @Composable
 fun VideoFrameCaptureButton(
@@ -87,10 +94,7 @@ fun VideoFrameCaptureButton(
 ) {
   val context = LocalContext.current
   var showCaptureDialog by remember { mutableStateOf(false) }
-  var isCapturing by remember { mutableStateOf(false) }
-  var captureCount by remember { mutableStateOf(0) }
-  val maxFrames = 5
-  
+
   val cameraPermissionLauncher = rememberLauncherForActivityResult(
     ActivityResultContracts.RequestPermission()
   ) { granted ->
@@ -98,7 +102,7 @@ fun VideoFrameCaptureButton(
       showCaptureDialog = true
     }
   }
-  
+
   IconButton(
     onClick = {
       when (PackageManager.PERMISSION_GRANTED) {
@@ -122,26 +126,21 @@ fun VideoFrameCaptureButton(
       tint = MaterialTheme.colorScheme.onPrimary
     )
   }
-  
+
   if (showCaptureDialog) {
     VideoFrameCaptureDialog(
-      onDismiss = { 
+      onDismiss = {
         showCaptureDialog = false
-        isCapturing = false
-        captureCount = 0
       },
       onFramesCaptured = { frames ->
         onFramesCaptured(frames)
         showCaptureDialog = false
-        isCapturing = false
-        captureCount = 0
       },
-      maxFrames = maxFrames
+      maxFrames = MAX_FRAMES_DEFAULT
     )
   }
 }
 
-@Suppress("DEPRECATION") // Using legacy Camera API for compatibility
 @Composable
 private fun VideoFrameCaptureDialog(
   onDismiss: () -> Unit,
@@ -149,111 +148,110 @@ private fun VideoFrameCaptureDialog(
   maxFrames: Int,
 ) {
   val context = LocalContext.current
+  val lifecycleOwner = LocalLifecycleOwner.current
   val coroutineScope = rememberCoroutineScope()
-  
-  var camera by remember { mutableStateOf<Camera?>(null) }
-  var surfaceView by remember { mutableStateOf<SurfaceView?>(null) }
+
+  var cameraProvider by remember { mutableStateOf<ProcessCameraProvider?>(null) }
+  var imageCapture by remember { mutableStateOf<ImageCapture?>(null) }
+  var previewView by remember { mutableStateOf<PreviewView?>(null) }
   var isCapturing by remember { mutableStateOf(false) }
   var captureCount by remember { mutableStateOf(0) }
   var capturedFrames by remember { mutableStateOf<List<Bitmap>>(emptyList()) }
-  var lastCaptureTime by remember { mutableStateOf(0L) }
-  var cameraDisplayOrientation by remember { mutableStateOf(0) }
-  
-  val captureIntervalMs = 1000L // 1 FPS
-  
+  var captureJob by remember { mutableStateOf<Job?>(null) }
+
+  LaunchedEffect(previewView) {
+    val view = previewView ?: return@LaunchedEffect
+    try {
+      val provider = getCameraProvider(context)
+      val preview = Preview.Builder().build().apply {
+        setSurfaceProvider(view.surfaceProvider)
+      }
+      val rotation = view.display?.rotation ?: Surface.ROTATION_0
+      val capture = ImageCapture.Builder()
+        .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+        .setTargetRotation(rotation)
+        .build()
+
+      provider.unbindAll()
+      provider.bindToLifecycle(
+        lifecycleOwner,
+        CameraSelector.DEFAULT_BACK_CAMERA,
+        preview,
+        capture,
+      )
+
+      cameraProvider = provider
+      imageCapture = capture
+    } catch (t: Throwable) {
+      Log.e(TAG, "Failed to bind CameraX preview", t)
+      cameraProvider?.unbindAll()
+      cameraProvider = null
+      imageCapture = null
+    }
+  }
+
+  fun stopCapture() {
+    isCapturing = false
+    captureJob?.cancel()
+    captureJob = null
+  }
+
+  DisposableEffect(Unit) {
+    onDispose {
+      stopCapture()
+      cameraProvider?.unbindAll()
+    }
+  }
+
   fun startCapture() {
+    val capture = imageCapture
+    val view = previewView
+    if (capture == null || view == null) {
+      Log.w(TAG, "Camera not ready for capture")
+      return
+    }
+    if (isCapturing) return
+
     isCapturing = true
     captureCount = 0
     capturedFrames = emptyList()
-    lastCaptureTime = System.currentTimeMillis()
-  }
-  
-  fun stopCapture() {
-    isCapturing = false
-    camera?.setPreviewCallback(null)
-  }
-  
-  fun initializeCamera() {
-    try {
-      val cameraId = 0 // Default to back camera
-      cameraDisplayOrientation = getCameraDisplayOrientation(context, cameraId)
-      
-      camera = Camera.open(cameraId).apply {
-        surfaceView?.holder?.let { holder ->
-          setPreviewDisplay(holder)
-          
-          // Set the display orientation to match device orientation
-          setDisplayOrientation(cameraDisplayOrientation)
-          
-          val parameters = this.parameters
-          parameters?.let { params ->
-            // Set preview format
-            params.previewFormat = ImageFormat.NV21
-            
-            // Set preview size
-            val supportedSizes = params.supportedPreviewSizes
-            val targetSize = supportedSizes?.maxByOrNull { it.width * it.height }
-            targetSize?.let { size ->
-              params.setPreviewSize(size.width, size.height)
-            }
+    capture.targetRotation = view.display?.rotation ?: Surface.ROTATION_0
 
-            params.supportedPictureSizes?.maxByOrNull { it.width * it.height }?.let { size ->
-              params.setPictureSize(size.width, size.height)
-            }
-            
-            this.parameters = params
+    captureJob = coroutineScope.launch {
+      var framesToEmit: List<Bitmap>? = null
+      try {
+        while (isActive && isCapturing && captureCount < maxFrames) {
+          val bitmap = captureBitmap(capture, context)
+          if (bitmap != null) {
+            capturedFrames = capturedFrames + bitmap
+            captureCount++
           }
-          
-          setPreviewCallback { data, camera ->
-            if (!isCapturing || captureCount >= maxFrames) return@setPreviewCallback
-            
-            val currentTime = System.currentTimeMillis()
-            if (currentTime - lastCaptureTime < captureIntervalMs) return@setPreviewCallback
-            
-            lastCaptureTime = currentTime
-            
-            coroutineScope.launch {
-              try {
-                val bitmap = convertFrameToBitmap(data, camera, cameraDisplayOrientation)
-                bitmap?.let {
-                  capturedFrames = capturedFrames + it
-                  captureCount++
-                  
-                  if (captureCount >= maxFrames) {
-                    stopCapture()
-                    onFramesCaptured(capturedFrames)
-                  }
-                }
-              } catch (e: Exception) {
-                Log.e(TAG, "Error processing frame", e)
-              }
-            }
+
+          if (captureCount >= maxFrames) {
+            framesToEmit = capturedFrames
+            isCapturing = false
+            break
           }
-          
-          startPreview()
+
+          delay(CAPTURE_INTERVAL_MS)
+        }
+      } catch (e: Exception) {
+        Log.e(TAG, "Error capturing frame", e)
+      } finally {
+        captureJob = null
+        if (!framesToEmit.isNullOrEmpty()) {
+          onFramesCaptured(framesToEmit!!)
         }
       }
-    } catch (e: Exception) {
-      Log.e(TAG, "Failed to initialize camera", e)
     }
   }
-  
-  fun releaseCamera() {
-    camera?.apply {
-      setPreviewCallback(null)
-      stopPreview()
-      release()
+
+  Dialog(
+    onDismissRequest = {
+      stopCapture()
+      onDismiss()
     }
-    camera = null
-  }
-  
-  DisposableEffect(Unit) {
-    onDispose {
-      releaseCamera()
-    }
-  }
-  
-  Dialog(onDismissRequest = onDismiss) {
+  ) {
     Card(
       modifier = Modifier
         .fillMaxWidth()
@@ -268,8 +266,7 @@ private fun VideoFrameCaptureDialog(
           style = MaterialTheme.typography.titleLarge,
           modifier = Modifier.padding(bottom = 16.dp)
         )
-        
-        // Camera preview
+
         Box(
           modifier = Modifier
             .fillMaxWidth()
@@ -277,25 +274,16 @@ private fun VideoFrameCaptureDialog(
         ) {
           AndroidView(
             factory = { ctx ->
-              SurfaceView(ctx).apply {
-                surfaceView = this
-                holder.addCallback(object : SurfaceHolder.Callback {
-                  override fun surfaceCreated(holder: SurfaceHolder) {
-                    initializeCamera()
-                  }
-                  
-                  override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {}
-                  
-                  override fun surfaceDestroyed(holder: SurfaceHolder) {
-                    releaseCamera()
-                  }
-                })
+              PreviewView(ctx).also { preview ->
+                previewView = preview
               }
             },
-            modifier = Modifier.fillMaxSize()
+            modifier = Modifier.fillMaxSize(),
+            onRelease = {
+              previewView = null
+            }
           )
-          
-          // Overlay with capture info
+
           Card(
             modifier = Modifier
               .align(Alignment.BottomCenter)
@@ -305,31 +293,40 @@ private fun VideoFrameCaptureDialog(
             )
           ) {
             Text(
-              text = if (isCapturing) "Capturing: $captureCount/$maxFrames" else "Ready to capture $maxFrames frames at 1 FPS",
+              text = if (isCapturing) {
+                "Capturing: $captureCount/$maxFrames"
+              } else {
+                "Ready to capture $maxFrames frames at 1 FPS"
+              },
               modifier = Modifier.padding(8.dp),
               style = MaterialTheme.typography.bodyMedium
             )
           }
         }
-        
+
         if (isCapturing) {
           LinearProgressIndicator(
             progress = { captureCount.toFloat() / maxFrames.toFloat() },
             modifier = Modifier
               .fillMaxWidth()
-              .padding(vertical = 8.dp),
+              .padding(vertical = 8.dp)
           )
         }
-        
+
         Spacer(modifier = Modifier.height(16.dp))
-        
+
         Row(
           horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-          OutlinedButton(onClick = onDismiss) {
+          OutlinedButton(
+            onClick = {
+              stopCapture()
+              onDismiss()
+            }
+          ) {
             Text("Cancel")
           }
-          
+
           Button(
             onClick = {
               if (isCapturing) {
@@ -338,14 +335,14 @@ private fun VideoFrameCaptureDialog(
                 startCapture()
               }
             },
-            enabled = camera != null
+            enabled = imageCapture != null
           ) {
             Icon(
               imageVector = if (isCapturing) Icons.Default.Stop else Icons.Default.Videocam,
               contentDescription = null,
               modifier = Modifier.size(18.dp)
             )
-            Spacer(modifier = Modifier.width(4.dp))
+            Spacer(modifier = Modifier.size(4.dp))
             Text(if (isCapturing) "Stop" else "Start")
           }
         }
@@ -354,30 +351,96 @@ private fun VideoFrameCaptureDialog(
   }
 }
 
-private fun convertFrameToBitmap(data: ByteArray, camera: Camera?, displayOrientation: Int): Bitmap? {
-  return try {
-    val parameters = camera?.parameters ?: return null
-    val width = parameters.previewSize.width
-    val height = parameters.previewSize.height
-    
-    val yuvImage = YuvImage(data, ImageFormat.NV21, width, height, null)
-    val out = ByteArrayOutputStream()
-    yuvImage.compressToJpeg(Rect(0, 0, width, height), 80, out)
-    val imageBytes = out.toByteArray()
-    
-    var bitmap = BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
-    
-    // Apply rotation if needed to match the display orientation
-    if (displayOrientation != 0 && bitmap != null) {
-      val matrix = Matrix().apply {
-        postRotate(displayOrientation.toFloat())
+private suspend fun getCameraProvider(context: Context): ProcessCameraProvider =
+  suspendCancellableCoroutine { continuation ->
+    val future = ProcessCameraProvider.getInstance(context)
+    future.addListener(
+      {
+        try {
+          continuation.resume(future.get())
+        } catch (t: Throwable) {
+          if (continuation.isActive) {
+            continuation.cancel(t)
+          }
+        }
+      },
+      ContextCompat.getMainExecutor(context)
+    )
+    continuation.invokeOnCancellation { future.cancel(false) }
+  }
+
+private suspend fun captureBitmap(
+  imageCapture: ImageCapture,
+  context: Context,
+): Bitmap? = suspendCancellableCoroutine { continuation ->
+  val tempFile = try {
+    File.createTempFile("frame_", ".jpg", context.cacheDir)
+  } catch (e: IOException) {
+    Log.e(TAG, "Failed to create temp file for capture", e)
+    continuation.resume(null)
+    return@suspendCancellableCoroutine
+  }
+
+  val outputOptions = ImageCapture.OutputFileOptions.Builder(tempFile).build()
+  imageCapture.takePicture(
+    outputOptions,
+    ContextCompat.getMainExecutor(context),
+    object : ImageCapture.OnImageSavedCallback {
+      override fun onError(exception: ImageCaptureException) {
+        Log.e(TAG, "Image capture failed", exception)
+        tempFile.delete()
+        if (continuation.isActive) {
+          continuation.resume(null)
+        }
       }
-      bitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+
+      override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
+        val bitmap = decodeBitmapWithExif(tempFile)
+        tempFile.delete()
+        if (continuation.isActive) {
+          continuation.resume(bitmap)
+        }
+      }
     }
-    
+  )
+
+  continuation.invokeOnCancellation {
+    tempFile.delete()
+  }
+}
+
+private fun decodeBitmapWithExif(file: File): Bitmap? {
+  val bitmap = BitmapFactory.decodeFile(file.absolutePath) ?: return null
+  return try {
+    val exif = ExifInterface(file)
+    val orientation = exif.getAttributeInt(
+      ExifInterface.TAG_ORIENTATION,
+      ExifInterface.ORIENTATION_NORMAL,
+    )
+    val matrix = Matrix()
+    when (orientation) {
+      ExifInterface.ORIENTATION_ROTATE_90 -> matrix.postRotate(90f)
+      ExifInterface.ORIENTATION_ROTATE_180 -> matrix.postRotate(180f)
+      ExifInterface.ORIENTATION_ROTATE_270 -> matrix.postRotate(270f)
+      ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> matrix.preScale(-1f, 1f)
+      ExifInterface.ORIENTATION_FLIP_VERTICAL -> matrix.preScale(1f, -1f)
+      ExifInterface.ORIENTATION_TRANSPOSE -> {
+        matrix.preScale(-1f, 1f)
+        matrix.postRotate(270f)
+      }
+      ExifInterface.ORIENTATION_TRANSVERSE -> {
+        matrix.preScale(-1f, 1f)
+        matrix.postRotate(90f)
+      }
+    }
+
+    if (matrix.isIdentity) {
+      bitmap
+    } else {
+      Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+    }
+  } catch (e: IOException) {
+    Log.w(TAG, "Failed to read EXIF metadata", e)
     bitmap
-  } catch (e: Exception) {
-    Log.e(TAG, "Error converting frame to bitmap", e)
-    null
   }
 }

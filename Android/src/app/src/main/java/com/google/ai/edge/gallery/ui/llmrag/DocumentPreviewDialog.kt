@@ -92,7 +92,7 @@ fun DocumentPreviewDialog(
           }
         }
         
-        Divider()
+        HorizontalDivider()
         
         // Document info
         if (document != null) {
@@ -115,7 +115,7 @@ fun DocumentPreviewDialog(
             )
           }
           
-          Divider()
+          HorizontalDivider()
         }
         
         // Content
