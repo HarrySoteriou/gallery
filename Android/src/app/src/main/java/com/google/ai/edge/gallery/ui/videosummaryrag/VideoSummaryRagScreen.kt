@@ -41,6 +41,14 @@ import com.google.ai.edge.gallery.ui.modelmanager.ModelManagerViewModel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.getValue
+import com.google.ai.edge.gallery.ui.llmrag.DocumentBrowserDialog
+import com.google.ai.edge.gallery.ui.llmrag.DocumentPreviewDialog
+import kotlinx.coroutines.withTimeoutOrNull
 
 @Composable
 fun VideoSummaryRagScreen(
@@ -67,9 +75,19 @@ fun VideoSummaryRagChatViewWrapper(
   modifier: Modifier = Modifier,
 ) {
   val context = LocalContext.current
+  val coroutineScope = rememberCoroutineScope()
   val task = modelManagerViewModel.getTaskById(id = taskId)!!
   val ragTask = modelManagerViewModel.getTaskById(id = BuiltInTaskId.LLM_RAG)!!
   val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+
+  // Document browser state (reusing existing RAG document browser)
+  val storedDocuments by remember { mutableStateOf(LlmRagModelHelper.getDocumentMetadataList()) }
+  var isLoadingDocuments by remember { mutableStateOf(false) }
+  var showDocumentBrowser by remember { mutableStateOf(false) }
+  var showDocumentPreview by remember { mutableStateOf(false) }
+  var selectedDocumentId by remember { mutableStateOf<String?>(null) }
+  var previewDocument by remember { mutableStateOf<LlmRagModelHelper.StoredDocument?>(null) }
+  var isLoadingPreviewDocument by remember { mutableStateOf(false) }
 
   // Automatically load Gecko embedding model for RAG functionality
   LaunchedEffect(Unit) {
@@ -180,14 +198,80 @@ fun VideoSummaryRagChatViewWrapper(
     onStopButtonClicked = { model -> viewModel.stopResponse(model = model) },
     navigateUp = navigateUp,
     modifier = modifier,
+    // Video RAG specific - enable browse video knowledge button
+    onBrowseVideoKnowledge = { showDocumentBrowser = true },
   )
+
+  // Document browser dialog (reusing existing RAG implementation)
+  if (showDocumentBrowser) {
+    DocumentBrowserDialog(
+      documents = storedDocuments,
+      isLoading = isLoadingDocuments,
+      onDismiss = { showDocumentBrowser = false },
+      onRefresh = {
+        // Refresh stored documents to show video batch descriptions
+        isLoadingDocuments = true
+        coroutineScope.launch {
+          // The documents are automatically updated through the RAG system
+          isLoadingDocuments = false
+        }
+      },
+      onViewDocument = { documentId ->
+        selectedDocumentId = documentId
+        showDocumentBrowser = false
+        showDocumentPreview = true
+        previewDocument = null
+        isLoadingPreviewDocument = true
+
+        coroutineScope.launch {
+          try {
+            val document = withTimeoutOrNull(10000) {
+              LlmRagModelHelper.getDocumentById(documentId)
+            }
+
+            if (document != null) {
+              previewDocument = document
+              isLoadingPreviewDocument = false
+              Log.d("VideoSummaryRagScreen", "Successfully loaded document: ${document.metadata.title}")
+            } else {
+              Log.w("VideoSummaryRagScreen", "Document not found or loading timed out: $documentId")
+              isLoadingPreviewDocument = false
+              showDocumentPreview = false
+              selectedDocumentId = null
+            }
+          } catch (e: Exception) {
+            Log.e("VideoSummaryRagScreen", "Error loading document $documentId: ${e.message}")
+            isLoadingPreviewDocument = false
+            showDocumentPreview = false
+            selectedDocumentId = null
+          }
+        }
+      },
+      onDeleteDocument = { documentId ->
+        LlmRagModelHelper.deleteDocument(documentId)
+      }
+    )
+  }
+
+  // Document preview dialog
+  if (showDocumentPreview) {
+    DocumentPreviewDialog(
+      document = previewDocument,
+      isLoading = isLoadingPreviewDocument,
+      onDismiss = {
+        showDocumentPreview = false
+        previewDocument = null
+        selectedDocumentId = null
+        isLoadingPreviewDocument = false
+      }
+    )
+  }
 }
 
 /**
  * Complete batch processing workflow for VideoSummaryRAG:
  * 1. Store description in RAG knowledge base
- * 2. Embed for searchability
- * 3. Clear VLM context for next batch
+ * 2. Clear VLM context for next batch
  */
 private fun processBatchForRAG(
   ragTask: com.google.ai.edge.gallery.data.Task,
@@ -198,39 +282,33 @@ private fun processBatchForRAG(
 ) {
   CoroutineScope(Dispatchers.IO).launch {
     try {
-      // Find the RAG embedding model (Gecko)
-      val ragModel = ragTask.models.find {
-        it.name.contains("Gecko") && it.name.contains("Embedding")
-      }
+      if (batchDescription.isNotEmpty()) {
+        // Find the RAG embedding model (Gecko)
+        val ragModel = ragTask.models.find {
+          it.name.contains("Gecko") && it.name.contains("Embedding")
+        }
 
-      if (ragModel?.instance is RagModelInstance && batchDescription.isNotEmpty()) {
-        // Step 1: Store the batch description in RAG knowledge base
-        val batchId = System.currentTimeMillis()
-        val title = "Video Batch Analysis - $batchId"
-        val documentContent = "Video analysis batch:\n$batchDescription"
-
-        val result = LlmRagModelHelper.memorizeChunks(
-          model = ragModel,
-          chunks = listOf(documentContent),
-          title = title,
-          source = "video_batch_analysis"
+        // Step 1: Store batch description in RAG system using simplified manager
+        val result = VideoKnowledgeBaseManager.storeBatchDescription(
+          ragModel = ragModel,
+          batchDescription = batchDescription
         )
 
         if (result.isEmpty()) {
-          Log.d("VideoSummaryRagScreen", "Successfully stored batch description in RAG: $title")
+          Log.d("VideoSummaryRagScreen", "Successfully stored batch description in RAG")
 
-          // Step 2: Clear VLM context for next batch (like VideoAnalysis does)
+          // Step 2: Clear VLM context for next batch
           VideoAnalysisMemoryManager.clearContextForNewBatch(task, visionModel)
 
           // Step 3: Clear chat UI for next batch
           viewModel.clearAllMessages(visionModel)
 
-          Log.d("VideoSummaryRagScreen", "Cleared context for new batch - ready for next video analysis")
+          Log.d("VideoSummaryRagScreen", "Completed batch processing - ready for next video analysis")
         } else {
           Log.e("VideoSummaryRagScreen", "Failed to store batch in RAG: $result")
         }
       } else {
-        Log.w("VideoSummaryRagScreen", "RAG embedding model not found or not initialized")
+        Log.w("VideoSummaryRagScreen", "Empty batch description, skipping storage")
       }
     } catch (e: Exception) {
       Log.e("VideoSummaryRagScreen", "Failed to process batch for RAG", e)

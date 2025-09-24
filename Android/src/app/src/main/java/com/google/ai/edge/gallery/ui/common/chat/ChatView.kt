@@ -100,6 +100,8 @@ fun ChatView(
   documentPickerLauncher: androidx.activity.result.ActivityResultLauncher<String>? = null,
   loadAssetDocument: (String, String) -> Unit = { _, _ -> },
   isProcessingDocument: Boolean = false,
+  // Video RAG-specific parameters
+  onBrowseVideoKnowledge: (() -> Unit)? = null,
 ) {
   val uiState by viewModel.uiState.collectAsState()
   val modelManagerUiState by modelManagerViewModel.uiState.collectAsState()
@@ -226,6 +228,8 @@ fun ChatView(
                 documentPickerLauncher = documentPickerLauncher,
                 loadAssetDocument = loadAssetDocument,
                 isProcessingDocument = isProcessingDocument,
+                // Pass through Video RAG parameters
+                onBrowseVideoKnowledge = onBrowseVideoKnowledge,
               )
             // Model download
             false ->

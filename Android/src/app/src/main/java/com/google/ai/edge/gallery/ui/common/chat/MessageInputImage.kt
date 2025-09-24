@@ -35,6 +35,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Photo
 import androidx.compose.material.icons.rounded.PhotoCamera
 import androidx.compose.material.icons.rounded.Videocam
@@ -71,6 +72,7 @@ fun MessageInputImage(
   onStreamImage: (Bitmap) -> Unit = {},
   onStreamEnd: (Int) -> Unit = {},
   disableButtons: Boolean = false,
+  onBrowseVideoKnowledge: (() -> Unit)? = null,
 ) {
   val context = LocalContext.current
   var tempPhotoUri by remember { mutableStateOf(value = Uri.EMPTY) }
@@ -217,6 +219,28 @@ fun MessageInputImage(
       enabled = !disableButtons,
       modifier = Modifier.alpha(buttonAlpha)
     )
+
+    // Browse video knowledge base (only show if callback is provided)
+    if (onBrowseVideoKnowledge != null) {
+      IconButton(
+        onClick = {
+          if (disableButtons) {
+            return@IconButton
+          }
+          onBrowseVideoKnowledge()
+        },
+        colors = IconButtonDefaults.iconButtonColors(
+          containerColor = MaterialTheme.colorScheme.secondary
+        ),
+        modifier = Modifier.alpha(buttonAlpha)
+      ) {
+        Icon(
+          Icons.Rounded.Add,
+          contentDescription = "Browse video knowledge",
+          tint = MaterialTheme.colorScheme.onSecondary
+        )
+      }
+    }
   }
 
   // Live camera stream dialog.
