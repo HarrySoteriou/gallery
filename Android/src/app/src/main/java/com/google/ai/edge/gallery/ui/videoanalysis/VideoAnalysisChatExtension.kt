@@ -234,6 +234,6 @@ private fun buildVideoAnalysisPrompt(): String {
         }
       ],
     }
-  "scene_description": "Description of the overall scene"
+  "scene_description": "Generate a concise summary of the video"
   """.trimIndent()
 }

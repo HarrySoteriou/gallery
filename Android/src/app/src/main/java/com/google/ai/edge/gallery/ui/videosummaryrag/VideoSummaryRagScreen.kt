@@ -194,7 +194,7 @@ private fun processBatchForRAG(
   batchDescription: String,
   visionModel: com.google.ai.edge.gallery.data.Model,
   task: com.google.ai.edge.gallery.data.Task,
-  viewModel: LlmAskImageViewModel
+  viewModel: LlmChatViewModelBase
 ) {
   CoroutineScope(Dispatchers.IO).launch {
     try {
@@ -252,6 +252,6 @@ private fun buildVideoAnalysisPrompt(): String {
         }
       ],
     }
-  "scene_description": "Description of the overall scene"
+  "scene_description": "Generate a concise summary of the video"
   """.trimIndent()
 }
