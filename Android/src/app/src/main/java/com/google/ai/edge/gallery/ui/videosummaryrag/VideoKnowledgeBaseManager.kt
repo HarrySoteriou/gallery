@@ -23,8 +23,9 @@ import com.google.ai.edge.gallery.ui.llmrag.RagKnowledgeBase
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.text.SimpleDateFormat
-import java.util.*
+import java.time.ZonedDateTime
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 /**
  * Manages video batch descriptions by writing them to physical .txt files
@@ -35,8 +36,8 @@ import java.util.*
 object VideoKnowledgeBaseManager {
 
     private const val TAG = "VideoKnowledgeBase"
-    private val dateFormatter = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.getDefault())
-    private val displayDateFormatter = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+    private val fileNameFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd_HH-mm-ss", Locale.getDefault())
+    private val displayDateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
 
     private const val VIDEO_BATCH_RELATIVE_PATH = "assets/video_batch"
 
@@ -45,7 +46,8 @@ object VideoKnowledgeBaseManager {
      * Mirrors how the LLM RAG chat loads seed documents so the retrieval stack behaves identically.
      */
     private fun initializeVideoBatchesDirectory(context: Context): File {
-        val videoBatchesDir = File(context.getExternalFilesDir(null), VIDEO_BATCH_RELATIVE_PATH)
+        val baseDir = context.getExternalFilesDir(null) ?: context.filesDir
+        val videoBatchesDir = File(baseDir, VIDEO_BATCH_RELATIVE_PATH)
         if (!videoBatchesDir.exists()) {
             videoBatchesDir.mkdirs()
 
@@ -88,9 +90,9 @@ object VideoKnowledgeBaseManager {
                 return@withContext "Empty batch description"
             }
 
-            val timestamp = System.currentTimeMillis()
-            val dateString = dateFormatter.format(Date(timestamp))
-            val displayDateString = displayDateFormatter.format(Date(timestamp))
+            val now = ZonedDateTime.now()
+            val dateString = fileNameFormatter.format(now)
+            val displayDateString = displayDateFormatter.format(now)
             val fileName = "video_batch_$dateString.txt"
             val title = "Video Batch - $displayDateString"
 

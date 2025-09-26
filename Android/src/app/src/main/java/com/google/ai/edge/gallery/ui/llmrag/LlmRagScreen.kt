@@ -57,7 +57,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.google.ai.edge.gallery.data.BuiltInTaskId
@@ -71,6 +71,9 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.BufferedReader
 import java.io.InputStreamReader
+import java.time.ZonedDateTime
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 @Composable
 fun LlmRagScreen(
@@ -384,6 +387,9 @@ fun LlmRagScreen(
   }
 }
 
+private val videoBatchTimestampFormatter: DateTimeFormatter =
+  DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+
 /**
  * Extension function to help video analysis memorize image descriptions
  */
@@ -425,9 +431,10 @@ fun LlmRagViewModel.sendVideoAnalysisMessage(
           
           // When analysis is complete, automatically memorize the result
           if (done && !text.isNullOrBlank()) {
+            val formattedTimestamp = videoBatchTimestampFormatter.format(ZonedDateTime.now())
             val batchDescription = """
               Video Batch #$batchNumber Analysis:
-              Timestamp: ${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())}
+              Timestamp: $formattedTimestamp
               
               $text
               

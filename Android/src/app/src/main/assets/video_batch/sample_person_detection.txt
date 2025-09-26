@@ -1,0 +1,20 @@
+Video Analysis Batch
+Date: 2025-01-15 14:30:22
+
+{
+  "detected_objects": [
+    {
+      "name": "person",
+      "description": "Adult person wearing dark clothing walking from left to right across the frame"
+    },
+    {
+      "name": "car",
+      "description": "Red sedan vehicle parked in background, stationary throughout the sequence"
+    },
+    {
+      "name": "tree",
+      "description": "Large oak tree visible in upper right portion of frames, providing natural backdrop"
+    }
+  ],
+  "scene_description": "Outdoor suburban scene with pedestrian crossing a parking area near residential buildings. Natural lighting suggests daytime recording. Person appears to be walking purposefully across the frame while vehicles remain parked in designated spaces."
+}

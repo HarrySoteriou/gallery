@@ -43,11 +43,9 @@ class MainActivity : ComponentActivity() {
     (application as GalleryApplication).initializeTheme()
 
     enableEdgeToEdge()
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-      // Fix for three-button nav not properly going edge-to-edge.
-      // See: https://issuetracker.google.com/issues/298296168
-      window.isNavigationBarContrastEnforced = false
-    }
+    // Fix for three-button nav not properly going edge-to-edge.
+    // See: https://issuetracker.google.com/issues/298296168
+    window.isNavigationBarContrastEnforced = false
     setContent { GalleryTheme { Surface(modifier = Modifier.fillMaxSize()) { GalleryApp() } } }
     // Keep the screen on while the app is running for better demo experience.
     window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)

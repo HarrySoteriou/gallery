@@ -16,7 +16,7 @@
 
 package com.google.ai.edge.gallery.ui.navigation
 
-import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 
 import android.util.Log
 import androidx.activity.compose.BackHandler

@@ -48,8 +48,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import java.text.SimpleDateFormat
-import java.util.Date
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 @Composable
@@ -219,10 +220,17 @@ private fun ChunkItem(
   }
 }
 
+private val documentPreviewDateFormatter: DateTimeFormatter =
+  DateTimeFormatter.ofPattern("MMM dd, yyyy HH:mm", Locale.getDefault())
+    .withZone(ZoneId.systemDefault())
+
 private fun formatTimestamp(timestamp: Long): String {
-  return if (timestamp > 0) {
-    SimpleDateFormat("MMM dd, yyyy HH:mm", Locale.getDefault()).format(Date(timestamp))
-  } else {
+  if (timestamp <= 0) {
+    return "Unknown date"
+  }
+  return try {
+    documentPreviewDateFormatter.format(Instant.ofEpochMilli(timestamp))
+  } catch (e: Exception) {
     "Unknown date"
   }
 }

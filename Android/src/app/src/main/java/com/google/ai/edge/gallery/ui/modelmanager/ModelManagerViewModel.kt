@@ -194,6 +194,8 @@ constructor(
         task.models.add(0, bestModel)
       }
     }
+
+    syncVideoRagModels(curTasks)
   }
 
   fun updateConfigValuesUpdateTrigger() {
@@ -489,6 +491,8 @@ constructor(
       task.updateTrigger.value = System.currentTimeMillis()
     }
 
+    syncVideoRagModels(customTasks.map { it.task })
+
     // Add initial status and states.
     val modelDownloadStatus = uiState.value.modelDownloadStatus.toMutableMap()
     val modelInstances = uiState.value.modelInitializationStatus.toMutableMap()
@@ -743,10 +747,27 @@ constructor(
 
           val model = allowedModel.toModel()
           for (taskType in allowedModel.taskTypes) {
-            val task = curTasks.find { it.id == taskType }
-            task?.models?.add(model)
+            val targetTaskIds =
+              if (taskType == BuiltInTaskId.VIDEO_ANALYSIS) {
+                listOf(BuiltInTaskId.VIDEO_ANALYSIS, BuiltInTaskId.VIDEO_RAG_ANALYSIS)
+              } else {
+                listOf(taskType)
+              }
+
+            for (targetTaskId in targetTaskIds) {
+              if (
+                targetTaskId == BuiltInTaskId.VIDEO_RAG_ANALYSIS &&
+                  taskType != BuiltInTaskId.VIDEO_ANALYSIS
+              ) {
+                continue
+              }
+              val task = curTasks.find { it.id == targetTaskId }
+              task?.models?.add(model)
+            }
           }
         }
+
+        syncVideoRagModels(curTasks)
 
         // Process all tasks.
         processTasks()
@@ -908,12 +929,26 @@ constructor(
     Log.d(TAG, "text input history: $textInputHistory")
 
     Log.d(TAG, "model download status: $modelDownloadStatus")
+    syncVideoRagModels(tasks.values)
     return ModelManagerUiState(
       tasks = customTasks.map { it.task }.toList(),
       modelDownloadStatus = modelDownloadStatus,
       modelInitializationStatus = modelInstances,
       textInputHistory = textInputHistory,
     )
+  }
+
+  private fun syncVideoRagModels(tasks: Collection<Task>) {
+    val videoTask = tasks.firstOrNull { it.id == BuiltInTaskId.VIDEO_ANALYSIS } ?: return
+    val videoRagTask = tasks.firstOrNull { it.id == BuiltInTaskId.VIDEO_RAG_ANALYSIS } ?: return
+
+    val seen = mutableSetOf<String>()
+    videoRagTask.models.clear()
+    for (model in videoTask.models) {
+      if (seen.add(model.name)) {
+        videoRagTask.models.add(model)
+      }
+    }
   }
 
   private fun createModelFromImportedModelInfo(info: ImportedModel): Model {

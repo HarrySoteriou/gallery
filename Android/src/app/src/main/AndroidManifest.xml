@@ -17,12 +17,6 @@
 
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
-
-    <uses-sdk
-        android:minSdkVersion="31"
-        android:compileSdkVersion ="35"
-        android:targetSdkVersion="35" />
-
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
@@ -45,8 +39,7 @@
         android:label="Edge Gallery"
         android:roundIcon="@mipmap/ic_launcher"
         android:supportsRtl="true"
-        android:theme="@style/Theme.Gallery"
-        tools:targetApi="31">
+        android:theme="@style/Theme.Gallery">
         <!--
           android:configChanges="uiMode" tells the system don't destroy and
           recreate the activity when UI mode changes (e.g. setting dark mode).

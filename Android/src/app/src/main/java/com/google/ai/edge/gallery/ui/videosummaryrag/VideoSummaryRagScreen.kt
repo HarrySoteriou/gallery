@@ -19,13 +19,17 @@ package com.google.ai.edge.gallery.ui.videosummaryrag
 import android.content.Context
 import android.graphics.Bitmap
 import android.util.Log
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.Alignment
 import androidx.core.os.bundleOf
-import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.google.ai.edge.gallery.data.BuiltInTaskId
 import com.google.ai.edge.gallery.data.Model
@@ -78,8 +82,17 @@ fun VideoSummaryRagChatViewWrapper(
 ) {
   val context = LocalContext.current
   val coroutineScope = rememberCoroutineScope()
-  val task = modelManagerViewModel.getTaskById(id = taskId)!!
-  val ragTask = modelManagerViewModel.getTaskById(id = BuiltInTaskId.LLM_RAG)!!
+  val task = modelManagerViewModel.getTaskById(id = taskId)
+  val ragTask = modelManagerViewModel.getTaskById(id = BuiltInTaskId.LLM_RAG)
+
+  if (task == null || ragTask == null) {
+    LaunchedEffect(Unit) { modelManagerViewModel.loadModelAllowlistWhenNeeded() }
+    Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+      CircularProgressIndicator()
+    }
+    return
+  }
+
   val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
   // Document browser state (reusing existing RAG document browser)
@@ -157,6 +170,7 @@ fun VideoSummaryRagChatViewWrapper(
           Log.d("VideoSummaryRagScreen", "Processing batch for RAG - content length: ${lastMessage.content.length}")
           // Complete batch workflow: Store → Embed → Clear
           processBatchForRAG(
+            scope = coroutineScope,
             context = context,
             ragModel = ragEmbeddingModel,
             batchDescription = lastMessage.content,
@@ -264,6 +278,7 @@ fun VideoSummaryRagChatViewWrapper(
         Log.d("VideoSummaryRagScreen", "Manual save triggered - processing batch")
         if (ragEmbeddingModel != null) {
           processBatchForRAG(
+            scope = coroutineScope,
             context = context,
             ragModel = ragEmbeddingModel,
             batchDescription = lastMessage.content,
@@ -358,6 +373,7 @@ fun VideoSummaryRagChatViewWrapper(
  * 3. Clear VLM context for next batch
  */
 private fun processBatchForRAG(
+  scope: CoroutineScope,
   context: Context,
   ragModel: Model?,
   batchDescription: String,
@@ -366,7 +382,7 @@ private fun processBatchForRAG(
   viewModel: LlmChatViewModelBase,
   onStored: suspend () -> Unit = {}
 ) {
-  CoroutineScope(Dispatchers.IO).launch {
+  scope.launch(Dispatchers.IO) {
     try {
       Log.d("VideoSummaryRagScreen", "processBatchForRAG called with description length: ${batchDescription.length}")
       if (batchDescription.isNotEmpty()) {
@@ -389,7 +405,9 @@ private fun processBatchForRAG(
           RagContextManager.clearBatch(task, visionModel)
 
           // Step 3: Clear chat UI for next batch
-          viewModel.clearAllMessages(visionModel)
+          withContext(Dispatchers.Main) {
+            viewModel.clearAllMessages(visionModel)
+          }
 
           Log.d("VideoSummaryRagScreen", "Completed batch processing - ready for next video analysis")
         } else {
