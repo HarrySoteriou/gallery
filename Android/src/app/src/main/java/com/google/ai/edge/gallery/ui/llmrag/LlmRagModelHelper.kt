@@ -74,6 +74,76 @@ private fun useGpuForEmbeddings(model: Model): Boolean {
   )
   return accelerator == Accelerator.GPU.label
 }
+
+private fun createGeckoEmbedder(context: Context, model: Model): Embedder<String>? {
+  val externalFilesDir = context.getExternalFilesDir(null)
+  if (externalFilesDir == null) {
+    Log.w(TAG, "External files directory is null; cannot initialize Gecko embedder")
+    return null
+  }
+
+  val geckoModelPath = "${externalFilesDir.absolutePath}/$GECKO_EMBEDDING_MODEL_FILENAME"
+  val tokenizerPath = "${externalFilesDir.absolutePath}/$GECKO_TOKENIZER_FILENAME"
+
+  Log.d(TAG, "Looking for Gecko model at: $geckoModelPath")
+  Log.d(TAG, "Looking for tokenizer at: $tokenizerPath")
+
+  val geckoFile = java.io.File(geckoModelPath)
+  val tokenizerFile = java.io.File(tokenizerPath)
+
+  Log.d(TAG, "Gecko model file exists: ${geckoFile.exists()}")
+  Log.d(TAG, "Tokenizer file exists: ${tokenizerFile.exists()}")
+
+  if (!geckoFile.exists()) {
+    Log.w(TAG, "Gecko model file not found at: $geckoModelPath")
+    return null
+  }
+  if (!tokenizerFile.exists()) {
+    Log.w(TAG, "Tokenizer file not found at: $tokenizerPath")
+    return null
+  }
+
+  val wantsGpu = useGpuForEmbeddings(model)
+  Log.d(TAG, "Attempting to initialize Gecko embedder (GPU=$wantsGpu)")
+
+  val embedder = instantiateGeckoEmbedder(geckoModelPath, tokenizerPath, wantsGpu)
+  if (embedder != null) {
+    return embedder
+  }
+
+  if (wantsGpu) {
+    Log.w(TAG, "Retrying Gecko embedder initialization on CPU after GPU failure")
+    return instantiateGeckoEmbedder(geckoModelPath, tokenizerPath, false)
+  }
+
+  return null
+}
+
+private fun instantiateGeckoEmbedder(
+  geckoModelPath: String,
+  tokenizerPath: String,
+  enableGpu: Boolean,
+): GeckoEmbeddingModel? {
+  return try {
+    GeckoEmbeddingModel(
+      geckoModelPath,
+      Optional.of(tokenizerPath),
+      enableGpu,
+    )
+  } catch (e: UnsatisfiedLinkError) {
+    Log.w(
+      TAG,
+      "Native embedding libraries not available (${if (enableGpu) "GPU" else "CPU"}): ${e.message}",
+    )
+    null
+  } catch (e: Exception) {
+    Log.w(
+      TAG,
+      "Failed to initialize Gecko embedder (${if (enableGpu) "GPU" else "CPU"}): ${e.message}",
+    )
+    null
+  }
+}
 // IMPORTANT: must match the Gecko embedder model's output dimension.
 // The configured filename defaults to a 1024-dim embedding; probe the runtime value when possible.
 private const val DEFAULT_EMBEDDING_DIMENSION = 1024
@@ -166,43 +236,7 @@ object LlmRagModelHelper {
               null
             }
             // Set up embedder (Gecko embedding model - separate from Gemma3-1T-IT LLM)
-            val embedder = try {
-              // Construct full paths using the app's external files directory
-              val externalFilesDir = context.getExternalFilesDir(null)
-              val geckoModelPath = "${externalFilesDir?.absolutePath}/$GECKO_EMBEDDING_MODEL_FILENAME"
-              val tokenizerPath = "${externalFilesDir?.absolutePath}/$GECKO_TOKENIZER_FILENAME"
-              
-              Log.d(TAG, "Looking for Gecko model at: $geckoModelPath")
-              Log.d(TAG, "Looking for tokenizer at: $tokenizerPath")
-              
-              // Check if files exist before attempting to load
-              val geckoFile = java.io.File(geckoModelPath)
-              val tokenizerFile = java.io.File(tokenizerPath)
-              
-              Log.d(TAG, "Gecko model file exists: ${geckoFile.exists()}")
-              Log.d(TAG, "Tokenizer file exists: ${tokenizerFile.exists()}")
-              
-              if (!geckoFile.exists()) {
-                throw java.io.FileNotFoundException("Gecko model file not found at: $geckoModelPath")
-              }
-              if (!tokenizerFile.exists()) {
-                throw java.io.FileNotFoundException("Tokenizer file not found at: $tokenizerPath")
-              }
-              
-              val enableGpu = useGpuForEmbeddings(model)
-              Log.d(TAG, "Initializing Gecko embedder (GPU=$enableGpu)")
-              GeckoEmbeddingModel(
-                geckoModelPath,
-                Optional.of(tokenizerPath),
-                enableGpu,
-              )
-            } catch (e: UnsatisfiedLinkError) {
-              Log.w(TAG, "Native embedding libraries not available, using fallback: ${e.message}")
-              null
-            } catch (e: Exception) {
-              Log.w(TAG, "Failed to initialize Gecko embedder, using fallback: ${e.message}")
-              null
-            }
+            val embedder = createGeckoEmbedder(context, model)
 
             // Derive the semantic memory vector store dimension from the embedder when available.
             if (embedder != null) {
@@ -352,104 +386,6 @@ object LlmRagModelHelper {
     return ragInstance.embeddingDimension.takeIf { it > 0 }
   }
 
-  // Simple in-memory document store as fallback when native RAG is not available
-  private val documentStore = mutableMapOf<String, List<String>>()
-  
-  // Document metadata for better organization
-  private val documentMetadata = mutableMapOf<String, DocumentMetadata>()
-  
-  data class DocumentMetadata(
-    val id: String,
-    val title: String,
-    val timestamp: Long,
-    val chunkCount: Int,
-    val source: String // "upload", "sample", "video_analysis", etc.
-  )
-  
-  data class StoredDocument(
-    val metadata: DocumentMetadata,
-    val chunks: List<String>
-  )
-  
-  suspend fun memorizeChunks(
-    model: Model,
-    chunks: List<String>,
-    title: String = "Document",
-    source: String = "upload"
-  ): String = coroutineScope {
-    try {
-      Log.d(TAG, "Memorizing ${chunks.size} chunks for document '$title'...")
-      Log.d(TAG, "Model: ${model.name}, instance: ${model.instance?.javaClass?.simpleName}")
-      
-      // Check if model instance is properly initialized as RagModelInstance
-      val ragInstance = try {
-        model.instance as? RagModelInstance
-      } catch (e: ClassCastException) {
-        Log.w(TAG, "Model instance is not RagModelInstance, using fallback storage: ${e.message}")
-        null
-      }
-      
-      if (ragInstance != null) {
-        // Use the stored semantic memory to record batched memory items
-        val semanticMemory = ragInstance.semanticMemory
-        
-        if (semanticMemory != null) {
-          try {
-            // Use coroutines to await the ListenableFuture - following official example pattern
-            semanticMemory.recordBatchedMemoryItems(ImmutableList.copyOf(chunks)).await()
-            Log.d(TAG, "Successfully memorized ${chunks.size} chunks using semantic memory")
-            ""
-          } catch (e: Exception) {
-            Log.w(TAG, "Semantic memory failed, using fallback: ${e.message}")
-            // Fallback to simple in-memory storage
-            val documentId = "doc_${System.currentTimeMillis()}"
-            documentStore[documentId] = chunks
-            documentMetadata[documentId] = DocumentMetadata(
-              id = documentId,
-              title = title,
-              timestamp = System.currentTimeMillis(),
-              chunkCount = chunks.size,
-              source = source
-            )
-            Log.d(TAG, "Successfully memorized ${chunks.size} chunks using fallback storage")
-            ""
-          }
-        } else {
-          Log.i(TAG, "No semantic memory available, using fallback storage")
-          // Fallback to simple in-memory storage
-          val documentId = "doc_${System.currentTimeMillis()}"
-          documentStore[documentId] = chunks
-          documentMetadata[documentId] = DocumentMetadata(
-            id = documentId,
-            title = title,
-            timestamp = System.currentTimeMillis(),
-            chunkCount = chunks.size,
-            source = source
-          )
-          Log.d(TAG, "Successfully memorized ${chunks.size} chunks using fallback storage")
-          ""
-        }
-      } else {
-        Log.i(TAG, "RAG instance not available, using fallback storage")
-        // Fallback to simple in-memory storage when RAG instance is not available
-        val documentId = "doc_${System.currentTimeMillis()}"
-        documentStore[documentId] = chunks
-        documentMetadata[documentId] = DocumentMetadata(
-          id = documentId,
-          title = title,
-          timestamp = System.currentTimeMillis(),
-          chunkCount = chunks.size,
-          source = source
-        )
-        Log.d(TAG, "Successfully memorized ${chunks.size} chunks using fallback storage")
-        ""
-      }
-    } catch (e: Exception) {
-      val error = "Failed to memorize chunks: ${e.message}"
-      Log.e(TAG, error)
-      error
-    }
-  }
 
   suspend fun generateResponse(
     model: Model,
@@ -509,7 +445,7 @@ object LlmRagModelHelper {
     Log.i(TAG, "Using basic LLM without RAG")
     
     // Simple keyword-based retrieval from stored documents for context
-    val retrievalResult = retrieveRelevantChunks(prompt, maxChunks = 3)
+    val retrievalResult = RagKnowledgeBase.retrieveRelevantChunks(prompt, maxChunks = 3)
     
     val enhancedPrompt = if (retrievalResult.chunks.isNotEmpty()) {
       val contextInfo = retrievalResult.chunks.joinToString("\n\n") { chunk ->
@@ -576,7 +512,7 @@ Answer:"""
     Log.i(TAG, "Using fallback RAG implementation")
     
     // Simple keyword-based retrieval from stored documents
-    val retrievalResult = retrieveRelevantChunks(prompt, maxChunks = 5)
+    val retrievalResult = RagKnowledgeBase.retrieveRelevantChunks(prompt, maxChunks = 5)
     Log.d(TAG, "Retrieved ${retrievalResult.chunks.size} relevant chunks from ${retrievalResult.sourceDocuments.size} documents for query: $prompt")
     
     val enhancedPrompt = if (retrievalResult.chunks.isNotEmpty()) {
@@ -622,177 +558,4 @@ Answer: I would need more context or documents to be uploaded to provide a speci
     }
   }
   
-  data class RetrievalResult(
-    val chunks: List<String>,
-    val sourceDocuments: List<String>
-  )
-  
-  // Store the last retrieval result for UI display
-  @Volatile
-  private var lastRetrievalResult: RetrievalResult? = null
-  
-  fun getLastRetrievalResult(): RetrievalResult? = lastRetrievalResult
-  
-  private fun retrieveRelevantChunks(query: String, maxChunks: Int = 3): RetrievalResult {
-    if (documentStore.isEmpty()) {
-      Log.d(TAG, "Document store is empty, no chunks to retrieve")
-      return RetrievalResult(emptyList(), emptyList())
-    }
-    
-    Log.d(TAG, "Searching ${documentStore.values.sumOf { it.size }} total chunks across ${documentStore.size} documents")
-    
-    val queryWords = query.lowercase().split("\\s+".toRegex()).filter { it.length > 2 }
-    Log.d(TAG, "Query keywords: ${queryWords.joinToString(", ")}")
-    
-    val relevantChunks = mutableListOf<Triple<String, Double, String>>() // chunk, score, documentId
-    
-    // Enhanced scoring: keyword matching + phrase matching + semantic similarity
-    documentStore.forEach { (documentId, chunks) ->
-      chunks.forEach { chunk ->
-        val chunkLower = chunk.lowercase()
-        var score = 0.0
-        
-        // Keyword matching (basic)
-        val keywordMatches = queryWords.count { word -> chunkLower.contains(word) }
-        score += keywordMatches * 1.0
-        
-        // Phrase matching (bonus for exact phrases)
-        val queryLower = query.lowercase()
-        if (chunkLower.contains(queryLower)) {
-          score += 3.0 // High bonus for exact phrase match
-        }
-        
-        // Partial phrase matching (for multi-word queries)
-        val queryPhrases = query.split(" ").filter { it.length > 3 }
-        queryPhrases.forEach { phrase ->
-          if (chunkLower.contains(phrase.lowercase())) {
-            score += 1.5
-          }
-        }
-        
-        // Length bonus for longer chunks (more context)
-        if (chunk.length > 200) {
-          score += 0.5
-        }
-        
-        if (score > 0) {
-          relevantChunks.add(Triple(chunk, score, documentId))
-        }
-      }
-    }
-    
-    val selectedResults = relevantChunks
-      .sortedByDescending { it.second }
-      .take(maxChunks)
-    
-    val selectedChunks = selectedResults.map { it.first }
-    val sourceDocumentIds = selectedResults.map { it.third }.distinct()
-    val sourceDocuments = sourceDocumentIds.mapNotNull { docId ->
-      documentMetadata[docId]?.title
-    }
-    
-    Log.d(TAG, "Selected ${selectedChunks.size} chunks from ${sourceDocuments.size} documents: ${sourceDocuments.joinToString(", ")}")
-    
-    val result = RetrievalResult(selectedChunks, sourceDocuments)
-    lastRetrievalResult = result
-    return result
-  }
-
-  fun clearContext(model: Model) {
-    try {
-      // Check if model instance is properly initialized as RagModelInstance
-      val ragInstance = try {
-        model.instance as? RagModelInstance
-      } catch (e: ClassCastException) {
-        Log.w(TAG, "Model instance is not RagModelInstance, clearing fallback storage only: ${e.message}")
-        null
-      }
-      
-      // Clear fallback document store
-      documentStore.clear()
-      documentMetadata.clear()
-      Log.d(TAG, "Cleared document store")
-      
-      // Reset the underlying LLM session
-      if (ragInstance != null) {
-        LlmChatModelHelper.resetSession(
-          model = Model(name = model.name).apply { instance = ragInstance.llmInstance },
-          supportImage = false,
-          supportAudio = false
-        )
-      } else {
-        // If RAG instance is not available, reset the model directly
-        LlmChatModelHelper.resetSession(
-          model = model,
-          supportImage = false,
-          supportAudio = false
-        )
-      }
-    } catch (e: Exception) {
-      Log.e(TAG, "Failed to clear RAG context: ${e.message}")
-    }
-  }
-  
-  fun getDocumentCount(): Int = documentStore.values.sumOf { it.size }
-  
-  fun clearDocuments() {
-    documentStore.clear()
-    documentMetadata.clear()
-    Log.d(TAG, "Manually cleared all documents from store")
-  }
-  
-  /**
-   * Get all stored documents with their metadata
-   */
-  fun getStoredDocuments(): List<StoredDocument> {
-    return documentStore.map { (id, chunks) ->
-      val metadata = documentMetadata[id] ?: DocumentMetadata(
-        id = id,
-        title = "Unknown Document",
-        timestamp = 0L,
-        chunkCount = chunks.size,
-        source = "unknown"
-      )
-      StoredDocument(metadata, chunks)
-    }
-  }
-  
-  /**
-   * Get document metadata only (for quick browsing)
-   */
-  fun getDocumentMetadataList(): List<DocumentMetadata> {
-    return documentMetadata.values.sortedByDescending { it.timestamp }
-  }
-  
-  /**
-   * Get a specific document by ID
-   */
-  fun getDocumentById(documentId: String): StoredDocument? {
-    val chunks = documentStore[documentId] ?: return null
-    val metadata = documentMetadata[documentId] ?: return null
-    return StoredDocument(metadata, chunks)
-  }
-  
-  /**
-   * Delete a specific document
-   */
-  fun deleteDocument(documentId: String): Boolean {
-    val removed = documentStore.remove(documentId) != null
-    documentMetadata.remove(documentId)
-    if (removed) {
-      Log.d(TAG, "Deleted document: $documentId")
-    }
-    return removed
-  }
-  
-  /**
-   * Search documents by title or content
-   */
-  fun searchDocuments(query: String): List<StoredDocument> {
-    val queryLower = query.lowercase()
-    return getStoredDocuments().filter { doc ->
-      doc.metadata.title.lowercase().contains(queryLower) ||
-      doc.chunks.any { chunk -> chunk.lowercase().contains(queryLower) }
-    }
-  }
 }

@@ -27,8 +27,8 @@ import com.google.ai.edge.gallery.data.BuiltInTaskId
 import com.google.ai.edge.gallery.data.Category
 import com.google.ai.edge.gallery.data.Model
 import com.google.ai.edge.gallery.data.Task
-import com.google.ai.edge.gallery.data.TaskCapabilities
 import com.google.ai.edge.gallery.ui.llmchat.LlmChatModelHelper
+import com.google.ai.edge.gallery.ui.llmrag.RagContextManager
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -81,14 +81,7 @@ class VideoSummaryRagTask @Inject constructor() : CustomTask {
    * This reuses the same logic as VideoAnalysis for consistency.
    */
   fun clearContextForNewBatch(model: Model) {
-    val supportImage = TaskCapabilities.getImageSupport(task, model)
-    val supportAudio = TaskCapabilities.getAudioSupport(task, model)
-
-    LlmChatModelHelper.resetSession(
-      model = model,
-      supportImage = supportImage,
-      supportAudio = supportAudio,
-    )
+    RagContextManager.clearBatch(task, model)
   }
 
   @Composable

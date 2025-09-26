@@ -89,7 +89,7 @@ fun LlmRagScreen(
   var showDocumentBrowser by remember { mutableStateOf(false) }
   var showDocumentPreview by remember { mutableStateOf(false) }
   var selectedDocumentId by remember { mutableStateOf<String?>(null) }
-  var previewDocument by remember { mutableStateOf<LlmRagModelHelper.StoredDocument?>(null) }
+  var previewDocument by remember { mutableStateOf<RagKnowledgeBase.StoredDocument?>(null) }
   var isLoadingPreviewDocument by remember { mutableStateOf(false) }
   
   // File processing state
@@ -437,7 +437,7 @@ fun LlmRagViewModel.sendVideoAnalysisMessage(
             // Store in RAG memory asynchronously
             this@sendVideoAnalysisMessage.viewModelScope.launch(Dispatchers.Default) {
               try {
-                val error = LlmRagModelHelper.memorizeChunks(model, listOf(batchDescription), "Video Analysis Batch #$batchNumber", "video_analysis")
+                val error = RagKnowledgeBase.memorizeChunks(model, listOf(batchDescription), "Video Analysis Batch #$batchNumber", "video_analysis")
                 if (error.isEmpty()) {
                   android.util.Log.d("VideoRAGAnalysis", "Successfully stored batch #$batchNumber in RAG memory")
                 } else {

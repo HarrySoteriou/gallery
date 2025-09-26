@@ -19,8 +19,7 @@ package com.google.ai.edge.gallery.ui.videoanalysis
 import android.graphics.Bitmap
 import com.google.ai.edge.gallery.data.Model
 import com.google.ai.edge.gallery.data.Task
-import com.google.ai.edge.gallery.data.TaskCapabilities
-import com.google.ai.edge.gallery.ui.llmchat.LlmChatModelHelper
+import com.google.ai.edge.gallery.ui.llmrag.RagContextManager
 import com.google.ai.edge.gallery.ui.llmchat.LlmChatViewModelBase
 
 /**
@@ -41,14 +40,7 @@ object VideoAnalysisMemoryManager {
    * @param model The model instance to clear
    */
   fun clearContextForNewBatch(task: Task, model: Model) {
-    val supportImage = TaskCapabilities.getImageSupport(task, model)
-    val supportAudio = TaskCapabilities.getAudioSupport(task, model)
-    
-    LlmChatModelHelper.resetSession(
-      model = model,
-      supportImage = supportImage,
-      supportAudio = supportAudio,
-    )
+    RagContextManager.clearBatch(task, model)
   }
   
   /**

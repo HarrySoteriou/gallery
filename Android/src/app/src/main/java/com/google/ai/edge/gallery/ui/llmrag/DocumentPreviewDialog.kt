@@ -54,7 +54,7 @@ import java.util.Locale
 
 @Composable
 fun DocumentPreviewDialog(
-  document: LlmRagModelHelper.StoredDocument?,
+  document: RagKnowledgeBase.StoredDocument?,
   isLoading: Boolean,
   onDismiss: () -> Unit,
   modifier: Modifier = Modifier

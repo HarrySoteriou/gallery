@@ -95,11 +95,14 @@ LlmRagModelHelper.initialize(context, model) { error ->
     }
 }
 
-// Memorize content
-LlmRagModelHelper.memorizeChunks(model, chunks)
+// Memorize content (shared between chat + video tasks)
+RagKnowledgeBase.memorizeChunks(model, chunks)
 
 // Generate response with RAG
 LlmRagModelHelper.generateResponse(model, query)
+
+// Reset context between queries or batches
+RagContextManager.clearChatTurn(model)
 ```
 
 ### Video Analysis Integration

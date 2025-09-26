@@ -64,7 +64,7 @@ import java.util.Locale
 
 @Composable
 fun DocumentBrowserDialog(
-  documents: List<LlmRagModelHelper.DocumentMetadata>,
+  documents: List<RagKnowledgeBase.DocumentMetadata>,
   isLoading: Boolean,
   onDismiss: () -> Unit,
   onRefresh: () -> Unit,
@@ -165,7 +165,10 @@ fun DocumentBrowserDialog(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
           ) {
-            items(documents) { document ->
+            items(
+              items = documents,
+              key = { it.id },
+            ) { document ->
               DocumentItem(
                 document = document,
                 onView = { onViewDocument(document.id) },
@@ -181,7 +184,7 @@ fun DocumentBrowserDialog(
 
 @Composable
 private fun DocumentItem(
-  document: LlmRagModelHelper.DocumentMetadata,
+  document: RagKnowledgeBase.DocumentMetadata,
   onView: () -> Unit,
   onDelete: () -> Unit,
   modifier: Modifier = Modifier

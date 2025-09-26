@@ -44,8 +44,8 @@ class LlmRagViewModel @Inject constructor() : ChatViewModel() {
   private var memorizedChunksCount = 0
   
   // Document browsing state
-  private val _storedDocuments = MutableStateFlow<List<LlmRagModelHelper.DocumentMetadata>>(emptyList())
-  val storedDocuments: StateFlow<List<LlmRagModelHelper.DocumentMetadata>> = _storedDocuments.asStateFlow()
+  private val _storedDocuments = MutableStateFlow<List<RagKnowledgeBase.DocumentMetadata>>(emptyList())
+  val storedDocuments: StateFlow<List<RagKnowledgeBase.DocumentMetadata>> = _storedDocuments.asStateFlow()
   
   private val _isLoadingDocuments = MutableStateFlow(false)
   val isLoadingDocuments: StateFlow<Boolean> = _isLoadingDocuments.asStateFlow()
@@ -72,7 +72,7 @@ class LlmRagViewModel @Inject constructor() : ChatViewModel() {
         Log.d(TAG, "Created ${chunks.size} chunks from document '$title'")
         
         val error = withContext(Dispatchers.Default) {
-          LlmRagModelHelper.memorizeChunks(model, chunks, title, source)
+          RagKnowledgeBase.memorizeChunks(model, chunks, title, source)
         }
         
         if (error.isEmpty()) {
@@ -107,7 +107,7 @@ class LlmRagViewModel @Inject constructor() : ChatViewModel() {
         }
         
         val error = withContext(Dispatchers.Default) {
-          LlmRagModelHelper.memorizeChunks(model, chunks, "Image Descriptions", "image_analysis")
+          RagKnowledgeBase.memorizeChunks(model, chunks, "Image Descriptions", "image_analysis")
         }
         
         if (error.isEmpty()) {
@@ -155,7 +155,7 @@ class LlmRagViewModel @Inject constructor() : ChatViewModel() {
         }
 
         // Update retrieved documents after response generation
-        val retrievalResult = LlmRagModelHelper.getLastRetrievalResult()
+        val retrievalResult = RagKnowledgeBase.getLastRetrievalResult()
         _retrievedDocuments.value = retrievalResult?.sourceDocuments ?: emptyList()
 
         // Final update with complete response
@@ -164,6 +164,8 @@ class LlmRagViewModel @Inject constructor() : ChatViewModel() {
       } catch (e: Exception) {
         Log.e(TAG, "Failed to send message: ${e.message}")
         updateLastAssistantMessage(model, "Error: ${e.message}")
+      } finally {
+        RagContextManager.clearChatTurn(model)
       }
     }
   }
@@ -172,7 +174,7 @@ class LlmRagViewModel @Inject constructor() : ChatViewModel() {
     clearAllMessages(model)
     memorizedChunksCount = 0
     _retrievedDocuments.value = emptyList()
-    LlmRagModelHelper.clearContext(model)
+    RagContextManager.clearChatTurn(model, dropPersistentMemory = true)
     refreshStoredDocuments()
   }
   
@@ -184,7 +186,7 @@ class LlmRagViewModel @Inject constructor() : ChatViewModel() {
       _isLoadingDocuments.value = true
       try {
         val documents = withContext(Dispatchers.Default) {
-          LlmRagModelHelper.getDocumentMetadataList()
+          RagKnowledgeBase.getDocumentMetadataList()
         }
         _storedDocuments.value = documents
       } catch (e: Exception) {
@@ -198,10 +200,10 @@ class LlmRagViewModel @Inject constructor() : ChatViewModel() {
   /**
    * Get a specific document by ID
    */
-  suspend fun getDocumentById(documentId: String): LlmRagModelHelper.StoredDocument? {
+  suspend fun getDocumentById(documentId: String): RagKnowledgeBase.StoredDocument? {
     return try {
       withContext(Dispatchers.Default) {
-        LlmRagModelHelper.getDocumentById(documentId)
+        RagKnowledgeBase.getDocumentById(documentId)
       }
     } catch (e: Exception) {
       Log.e(TAG, "Error retrieving document $documentId: ${e.message}")
@@ -216,7 +218,7 @@ class LlmRagViewModel @Inject constructor() : ChatViewModel() {
     viewModelScope.launch {
       try {
         val deleted = withContext(Dispatchers.Default) {
-          LlmRagModelHelper.deleteDocument(documentId)
+          RagKnowledgeBase.deleteDocument(documentId)
         }
         if (deleted) {
           refreshStoredDocuments()
@@ -230,8 +232,8 @@ class LlmRagViewModel @Inject constructor() : ChatViewModel() {
   /**
    * Search documents
    */
-  fun searchDocuments(query: String): List<LlmRagModelHelper.StoredDocument> {
-    return LlmRagModelHelper.searchDocuments(query)
+  fun searchDocuments(query: String): List<RagKnowledgeBase.StoredDocument> {
+    return RagKnowledgeBase.searchDocuments(query)
   }
   
   /**
