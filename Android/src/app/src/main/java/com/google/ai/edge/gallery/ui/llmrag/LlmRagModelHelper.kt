@@ -72,7 +72,8 @@ private fun useGpuForEmbeddings(model: Model): Boolean {
     key = ConfigKeys.ACCELERATOR,
     defaultValue = Accelerator.GPU.label,
   )
-  return accelerator == Accelerator.GPU.label
+  Log.d(TAG, "Embedding backend forced to CPU (requested=$accelerator)")
+  return false
 }
 
 private fun createGeckoEmbedder(context: Context, model: Model): Embedder<String>? {

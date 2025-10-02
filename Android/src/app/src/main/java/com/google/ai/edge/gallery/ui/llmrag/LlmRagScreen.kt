@@ -61,6 +61,8 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.google.ai.edge.gallery.data.BuiltInTaskId
+import com.google.ai.edge.gallery.data.Accelerator
+import com.google.ai.edge.gallery.data.ConfigKeys
 import com.google.ai.edge.gallery.ui.common.chat.ChatInputType
 import com.google.ai.edge.gallery.ui.common.chat.ChatMessageText
 import com.google.ai.edge.gallery.ui.common.chat.ChatView
@@ -107,7 +109,10 @@ fun LlmRagScreen(
     val ragTask = modelManagerViewModel.getTaskById(BuiltInTaskId.LLM_RAG)
     val geckoModel = ragTask?.models?.find { it.name == "Gecko-1024-Embedding" }
     if (geckoModel != null && ragTask != null) {
-      Log.d("LlmRagScreen", "Auto-initializing Gecko embedding model for RAG")
+      val updatedConfigs = geckoModel.configValues.toMutableMap()
+      updatedConfigs[ConfigKeys.ACCELERATOR.label] = Accelerator.CPU.label
+      geckoModel.configValues = updatedConfigs.toMap()
+      Log.d("LlmRagScreen", "Auto-initializing Gecko embedding model for RAG (CPU mode)")
       modelManagerViewModel.initializeModel(context, ragTask, geckoModel)
     } else {
       Log.w("LlmRagScreen", "Gecko embedding model not found for auto-initialization")

@@ -108,49 +108,19 @@ fun VideoSummaryRagChatViewWrapper(
   }
   var isLoadingPreviewDocument by remember { mutableStateOf(false) }
 
-  var ragEmbeddingModel by remember { mutableStateOf<Model?>(null) }
-
-  // Automatically load Gecko embedding model for RAG functionality
+  // Initialize only document list, models will be loaded on-demand
   LaunchedEffect(Unit) {
     modelManagerViewModel.loadModelAllowlistWhenNeeded()
-
-    // Wait for the RAG task models to materialize after allowlist loading.
-    var attempts = 0
-    while (ragTask.models.isEmpty() && attempts < 50) {
-      delay(100)
-      attempts += 1
-    }
-
-    val geckoModel = ragTask.models.find { it.name.contains("Gecko", ignoreCase = true) }
-    val ragLlmModel = ragTask.models.firstOrNull { !it.name.contains("Embedding", ignoreCase = true) }
-
-    ragEmbeddingModel = ragLlmModel
-
-    if (ragLlmModel != null) {
-      Log.d("VideoSummaryRagScreen", "Initializing RAG LLM model: ${ragLlmModel.name}")
-      modelManagerViewModel.initializeModel(context, ragTask, ragLlmModel)
-    } else {
-      Log.w("VideoSummaryRagScreen", "No RAG LLM model found in allowlist")
-    }
-
-    if (geckoModel != null) {
-      Log.d("VideoSummaryRagScreen", "Ensuring Gecko embedding model assets are available")
-      modelManagerViewModel.initializeModel(context, ragTask, geckoModel)
-    } else {
-      Log.w("VideoSummaryRagScreen", "Gecko embedding model not found for RAG initialization")
-    }
-
     storedDocuments = RagKnowledgeBase.getDocumentMetadataList()
   }
 
   // Monitor for completed batch responses and process them for RAG storage
-  LaunchedEffect(uiState.messagesByModel, uiState.inProgress, ragEmbeddingModel) {
+  // Track last processed message to avoid re-processing
+  var lastProcessedMessageContent by remember { mutableStateOf("") }
+
+  LaunchedEffect(uiState.messagesByModel, uiState.inProgress) {
     Log.d("VideoSummaryRagScreen", "LaunchedEffect triggered - inProgress: ${uiState.inProgress}")
     if (!uiState.inProgress) {
-      if (ragEmbeddingModel == null) {
-        Log.d("VideoSummaryRagScreen", "RAG embedding model not ready - deferring batch persistence")
-        return@LaunchedEffect
-      }
       val selectedModel = modelManagerViewModel.uiState.value.selectedModel
       if (selectedModel.name.isEmpty()) {
         Log.d("VideoSummaryRagScreen", "Selected model is unset - skipping batch processing")
@@ -162,27 +132,43 @@ fun VideoSummaryRagChatViewWrapper(
       if (messages.isNotEmpty()) {
         val lastMessage = messages.lastOrNull()
         Log.d("VideoSummaryRagScreen", "Last message type: ${lastMessage?.javaClass?.simpleName}, side: ${if (lastMessage is ChatMessageText) lastMessage.side else "N/A"}")
-        
+
         if (lastMessage is ChatMessageText &&
             lastMessage.side == ChatSide.AGENT &&
-            lastMessage.content.isNotEmpty()) {
+            lastMessage.content.isNotEmpty() &&
+            lastMessage.content != lastProcessedMessageContent) {
 
-          Log.d("VideoSummaryRagScreen", "Processing batch for RAG - content length: ${lastMessage.content.length}")
-          // Complete batch workflow: Store → Embed → Clear
+          Log.d("VideoSummaryRagScreen", "Processing NEW batch for RAG - content length: ${lastMessage.content.length}")
+          val messageContent = lastMessage.content
+
+          // Show file path for debugging
+          val dirPath = VideoKnowledgeBaseManager.getVideoBatchesDirectoryPath(context)
+          Log.d("VideoSummaryRagScreen", "Video batches will be stored at: $dirPath")
+
+          // Complete batch workflow: Clear GPU → Load Embedding → Store → Clear GPU
           processBatchForRAG(
             scope = coroutineScope,
             context = context,
-            ragModel = ragEmbeddingModel,
-            batchDescription = lastMessage.content,
+            modelManagerViewModel = modelManagerViewModel,
+            ragTask = ragTask,
+            batchDescription = messageContent,
             visionModel = selectedModel,
             task = task,
             viewModel = viewModel,
             onStored = {
               storedDocuments = RagKnowledgeBase.getDocumentMetadataList()
+              // Log files after storage
+              val files = VideoKnowledgeBaseManager.listAllFilesInDirectory(context)
+              Log.d("VideoSummaryRagScreen", "Files in directory after storage: ${files.joinToString(", ")}")
+              lastProcessedMessageContent = messageContent
             }
           )
         } else {
-          Log.d("VideoSummaryRagScreen", "Skipping batch processing - conditions not met")
+          if (lastMessage is ChatMessageText && lastMessage.content == lastProcessedMessageContent) {
+            Log.d("VideoSummaryRagScreen", "Skipping - already processed this message")
+          } else {
+            Log.d("VideoSummaryRagScreen", "Skipping batch processing - conditions not met")
+          }
         }
       } else {
         Log.d("VideoSummaryRagScreen", "No messages found for processing")
@@ -211,8 +197,18 @@ fun VideoSummaryRagChatViewWrapper(
         }
       }
 
+      // CRITICAL: Limit images to prevent GPU memory overflow
+      // MediaPipe keeps all images in GPU memory until session reset
+      val maxImagesPerBatch = 5
+      val actualImages = if (images.size > maxImagesPerBatch) {
+        Log.w("VideoSummaryRagScreen", "Image batch size ${images.size} exceeds limit $maxImagesPerBatch, truncating")
+        images.take(maxImagesPerBatch)
+      } else {
+        images
+      }
+
       // Auto-inject VideoAnalysis prompt when images are provided (for batch processing)
-      if (images.isNotEmpty() && text.isEmpty()) {
+      if (actualImages.isNotEmpty() && text.isEmpty()) {
         text = buildVideoAnalysisPrompt()
         chatMessageText = ChatMessageText(content = text, side = ChatSide.USER)
         viewModel.addMessage(model = model, message = chatMessageText)
@@ -223,7 +219,7 @@ fun VideoSummaryRagChatViewWrapper(
         viewModel.generateResponse(
           model = model,
           input = text,
-          images = images,
+          images = actualImages,
           onError = {
             viewModel.handleError(
               context = context,
@@ -274,24 +270,23 @@ fun VideoSummaryRagChatViewWrapper(
       if (lastMessage is ChatMessageText &&
           lastMessage.side == ChatSide.AGENT &&
           lastMessage.content.isNotEmpty()) {
-        
+
+        val messageContent = lastMessage.content
         Log.d("VideoSummaryRagScreen", "Manual save triggered - processing batch")
-        if (ragEmbeddingModel != null) {
-          processBatchForRAG(
-            scope = coroutineScope,
-            context = context,
-            ragModel = ragEmbeddingModel,
-            batchDescription = lastMessage.content,
-            visionModel = model,
-            task = task,
-            viewModel = viewModel,
-            onStored = {
-          storedDocuments = RagKnowledgeBase.getDocumentMetadataList()
-            }
-          )
-        } else {
-          Log.d("VideoSummaryRagScreen", "RAG embedding model not ready during manual save")
-        }
+        processBatchForRAG(
+          scope = coroutineScope,
+          context = context,
+          modelManagerViewModel = modelManagerViewModel,
+          ragTask = ragTask,
+          batchDescription = messageContent,
+          visionModel = model,
+          task = task,
+          viewModel = viewModel,
+          onStored = {
+            storedDocuments = RagKnowledgeBase.getDocumentMetadataList()
+            lastProcessedMessageContent = messageContent
+          }
+        )
       } else {
         // Just clear context if no agent message to save
         RagContextManager.clearBatch(task, model)
@@ -367,15 +362,19 @@ fun VideoSummaryRagChatViewWrapper(
 }
 
 /**
- * Complete batch processing workflow for VideoSummaryRAG:
- * 1. Write description to .txt file in internal storage
- * 2. Embed file content in RAG knowledge base
- * 3. Clear VLM context for next batch
+ * Complete batch processing workflow for VideoSummaryRAG with CPU-only embedding:
+ * 1. Write description to .txt file and embed in RAG (CPU-only, no GPU conflicts)
+ * 2. Clear VLM context for next batch (CRITICAL: prevents memory overflow)
+ * 3. Clear chat UI for next batch
+ *
+ * Performance: CPU embedding (0.15-0.6s) is 10-60x faster than GPU swap overhead (5-10s).
+ * The VLM stays on GPU throughout the entire process.
  */
 private fun processBatchForRAG(
   scope: CoroutineScope,
   context: Context,
-  ragModel: Model?,
+  modelManagerViewModel: ModelManagerViewModel,
+  ragTask: com.google.ai.edge.gallery.data.Task,
   batchDescription: String,
   visionModel: Model,
   task: com.google.ai.edge.gallery.data.Task,
@@ -386,10 +385,19 @@ private fun processBatchForRAG(
     try {
       Log.d("VideoSummaryRagScreen", "processBatchForRAG called with description length: ${batchDescription.length}")
       if (batchDescription.isNotEmpty()) {
-        // Step 1: Store batch description in RAG system - write .txt file and embed
-        val result = VideoKnowledgeBaseManager.storeBatchDescription(
+        // CRITICAL: Clear VLM session FIRST to release image memory before embedding
+        // This prevents GPU memory overflow from accumulated frames
+        Log.d("VideoSummaryRagScreen", "Clearing VLM session to release image memory")
+        RagContextManager.clearBatch(task, visionModel)
+
+        // Small delay to ensure GPU memory is released before embedding
+        delay(100)
+
+        // Store batch description with CPU-only embedding (VLM stays on GPU)
+        val result = VideoKnowledgeBaseManager.storeBatchDescriptionWithGpuManagement(
           context = context,
-          ragModel = ragModel,
+          modelManagerViewModel = modelManagerViewModel,
+          ragTask = ragTask,
           batchDescription = batchDescription
         )
         Log.d("VideoSummaryRagScreen", "storeBatchDescription result: '$result'")
@@ -401,10 +409,7 @@ private fun processBatchForRAG(
             onStored()
           }
 
-          // Step 2: Clear VLM context for next batch
-          RagContextManager.clearBatch(task, visionModel)
-
-          // Step 3: Clear chat UI for next batch
+          // Clear chat UI for next batch
           withContext(Dispatchers.Main) {
             viewModel.clearAllMessages(visionModel)
           }

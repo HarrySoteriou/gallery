@@ -60,7 +60,14 @@ data class AllowedModel(
       val defaultTopK: Int = defaultConfig.topK ?: DEFAULT_TOPK
       val defaultTopP: Float = defaultConfig.topP ?: DEFAULT_TOPP
       val defaultTemperature: Float = defaultConfig.temperature ?: DEFAULT_TEMPERATURE
-      val defaultMaxToken = defaultConfig.maxTokens ?: 1024
+      // Use higher token limit for video tasks to allow complete descriptions
+      val isVideoTask = taskTypes.contains(BuiltInTaskId.VIDEO_ANALYSIS) ||
+                        taskTypes.contains(BuiltInTaskId.VIDEO_RAG_ANALYSIS)
+      val defaultMaxToken = if (isVideoTask) {
+        defaultConfig.maxTokens ?: DEFAULT_VIDEO_MAX_TOKEN
+      } else {
+        defaultConfig.maxTokens ?: DEFAULT_MAX_TOKEN
+      }
       var accelerators: List<Accelerator> = DEFAULT_ACCELERATORS
       if (defaultConfig.accelerators != null) {
         val items = defaultConfig.accelerators.split(",")
@@ -87,7 +94,11 @@ data class AllowedModel(
     var showBenchmarkButton = true
     var showRunAgainButton = true
     if (isLlmModel) {
-      showBenchmarkButton = false
+      // Enable benchmark button for video analysis tasks to show stats
+      val isVideoTask = bestForTaskTypes?.any {
+        it.contains("video", ignoreCase = true)
+      } == true
+      showBenchmarkButton = isVideoTask
       showRunAgainButton = false
     }
 

@@ -112,11 +112,18 @@ object LlmChatModelHelper {
 
   fun resetSession(model: Model, supportImage: Boolean, supportAudio: Boolean) {
     try {
-      Log.d(TAG, "Resetting session for model '${model.name}'")
+      Log.d(TAG, "Resetting session for model '${model.name}' to clear context and free GPU memory")
 
       val instance = model.instance as LlmModelInstance? ?: return
       val session = instance.session
+
+      // Close old session - this releases accumulated images and context from GPU memory
       session.close()
+
+      // Force explicit null to help GC (especially important for video batches with multiple images)
+      @Suppress("UNUSED_VALUE")
+      var oldSession: LlmInferenceSession? = session
+      oldSession = null
 
       val inference = instance.engine
       val topK = model.getIntConfigValue(key = ConfigKeys.TOPK, defaultValue = DEFAULT_TOPK)
@@ -125,7 +132,7 @@ object LlmChatModelHelper {
         model.getFloatConfigValue(key = ConfigKeys.TEMPERATURE, defaultValue = DEFAULT_TEMPERATURE)
       val shouldEnableImage = supportImage
       val shouldEnableAudio = supportAudio
-      Log.d(TAG, "Enable image: $shouldEnableImage, enable audio: $shouldEnableAudio")
+      Log.d(TAG, "Creating fresh session - Enable image: $shouldEnableImage, enable audio: $shouldEnableAudio")
       val newSession =
         LlmInferenceSession.createFromOptions(
           inference,
@@ -142,30 +149,45 @@ object LlmChatModelHelper {
             .build(),
         )
       instance.session = newSession
-      Log.d(TAG, "Resetting done")
+      Log.d(TAG, "Session reset complete - GPU memory freed")
     } catch (e: Exception) {
-      Log.d(TAG, "Failed to reset session", e)
+      Log.e(TAG, "Failed to reset session", e)
     }
   }
 
   fun cleanUp(model: Model, onDone: () -> Unit) {
     if (model.instance == null) {
+      Log.d(TAG, "Clean up skipped - model instance is null")
+      onDone()
       return
     }
 
+    Log.d(TAG, "Cleaning up model '${model.name}' - releasing GPU memory and resources")
     val instance = model.instance as LlmModelInstance
 
     try {
+      // Close session first to release accumulated context/images
       instance.session.close()
+      Log.d(TAG, "Session closed successfully")
     } catch (e: Exception) {
       Log.e(TAG, "Failed to close the LLM Inference session: ${e.message}")
     }
 
     try {
+      // Close engine to fully release GPU memory
       instance.engine.close()
+      Log.d(TAG, "Engine closed successfully")
     } catch (e: Exception) {
       Log.e(TAG, "Failed to close the LLM Inference engine: ${e.message}")
     }
+
+    // Force explicit null to help GC release GPU memory faster
+    @Suppress("UNUSED_VALUE")
+    var sessionRef: LlmInferenceSession? = instance.session
+    @Suppress("UNUSED_VALUE")
+    var engineRef: LlmInference? = instance.engine
+    sessionRef = null
+    engineRef = null
 
     val onCleanUp = cleanUpListeners.remove(model.name)
     if (onCleanUp != null) {
@@ -174,7 +196,7 @@ object LlmChatModelHelper {
     model.instance = null
 
     onDone()
-    Log.d(TAG, "Clean up done.")
+    Log.d(TAG, "Clean up done - GPU memory freed.")
   }
 
   fun runInference(
