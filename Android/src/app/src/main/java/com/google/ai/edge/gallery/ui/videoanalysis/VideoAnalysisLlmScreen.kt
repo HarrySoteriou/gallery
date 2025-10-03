@@ -16,19 +16,12 @@
 
 package com.google.ai.edge.gallery.ui.videoanalysis
 
-import android.graphics.Bitmap
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
-import androidx.core.os.bundleOf
 import com.google.ai.edge.gallery.data.BuiltInTaskId
-import com.google.ai.edge.gallery.firebaseAnalytics
-import com.google.ai.edge.gallery.ui.common.chat.ChatView
-import com.google.ai.edge.gallery.ui.common.chat.ChatMessageText
-import com.google.ai.edge.gallery.ui.common.chat.ChatMessageImage
+import com.google.ai.edge.gallery.ui.llmchat.ChatViewWrapper
 import com.google.ai.edge.gallery.ui.llmchat.LlmAskImageViewModel
-import com.google.ai.edge.gallery.ui.llmchat.LlmChatViewModelBase
 import com.google.ai.edge.gallery.ui.modelmanager.ModelManagerViewModel
 
 @Composable
@@ -42,86 +35,6 @@ fun VideoAnalysisScreen(
     viewModel = viewModel,
     modelManagerViewModel = modelManagerViewModel,
     taskId = BuiltInTaskId.VIDEO_ANALYSIS,
-    navigateUp = navigateUp,
-    modifier = modifier,
-  )
-}
-
-@Composable
-fun ChatViewWrapper(
-  viewModel: LlmChatViewModelBase,
-  modelManagerViewModel: ModelManagerViewModel,
-  taskId: String,
-  navigateUp: () -> Unit,
-  modifier: Modifier = Modifier,
-) {
-  val context = LocalContext.current
-  val task = modelManagerViewModel.getTaskById(id = taskId)!!
-
-  ChatView(
-    task = task,
-    viewModel = viewModel,
-    modelManagerViewModel = modelManagerViewModel,
-    onSendMessage = { model, messages ->
-      for (message in messages) {
-        viewModel.addMessage(model = model, message = message)
-      }
-
-      var text = ""
-      val images: MutableList<Bitmap> = mutableListOf()
-      var chatMessageText: ChatMessageText? = null
-      for (message in messages) {
-        if (message is ChatMessageText) {
-          chatMessageText = message
-          text = message.content
-        } else if (message is ChatMessageImage) {
-          images.addAll(message.bitmaps)
-        }
-      }
-      if (text.isNotEmpty() && chatMessageText != null) {
-        modelManagerViewModel.addTextInputHistory(text)
-        viewModel.generateResponse(
-          model = model,
-          input = text,
-          images = images,
-          onError = {
-            viewModel.handleError(
-              context = context,
-              task = task,
-              model = model,
-              modelManagerViewModel = modelManagerViewModel,
-              triggeredMessage = chatMessageText,
-            )
-          },
-        )
-
-        firebaseAnalytics?.logEvent(
-          "generate_action",
-          bundleOf("capability_name" to task.id, "model_id" to model.name),
-        )
-      }
-    },
-    onRunAgainClicked = { model, message ->
-      if (message is ChatMessageText) {
-        viewModel.runAgain(
-          model = model,
-          message = message,
-          onError = {
-            viewModel.handleError(
-              context = context,
-              task = task,
-              model = model,
-              modelManagerViewModel = modelManagerViewModel,
-              triggeredMessage = message,
-            )
-          },
-        )
-      }
-    },
-    onBenchmarkClicked = { _, _, _, _ -> },
-    onResetSessionClicked = { model -> viewModel.resetSession(task = task, model = model) },
-    showStopButtonInInputWhenInProgress = true,
-    onStopButtonClicked = { model -> viewModel.stopResponse(model = model) },
     navigateUp = navigateUp,
     modifier = modifier,
   )

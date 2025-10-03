@@ -21,10 +21,14 @@ import androidx.lifecycle.viewModelScope
 import com.google.ai.edge.gallery.data.BuiltInTaskId
 import com.google.ai.edge.gallery.data.Model
 import com.google.ai.edge.gallery.ui.common.chat.ChatMessage
+import com.google.ai.edge.gallery.ui.common.chat.ChatMessageBenchmarkLlmResult
 import com.google.ai.edge.gallery.ui.common.chat.ChatMessageLoading
 import com.google.ai.edge.gallery.ui.common.chat.ChatMessageText
+import com.google.ai.edge.gallery.ui.common.chat.ChatMessageType
 import com.google.ai.edge.gallery.ui.common.chat.ChatSide
 import com.google.ai.edge.gallery.ui.common.chat.ChatViewModel
+import com.google.ai.edge.gallery.ui.common.chat.Stat
+import com.google.ai.edge.gallery.ui.llmchat.LlmModelInstance
 import com.google.ai.edge.localagents.rag.models.AsyncProgressListener
 import com.google.ai.edge.localagents.rag.models.LanguageModelResponse
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -37,6 +41,14 @@ import kotlinx.coroutines.flow.asStateFlow
 import javax.inject.Inject
 
 private const val TAG = "AGLlmRagViewModel"
+
+private val LLM_STATS =
+  listOf(
+    Stat(id = "time_to_first_token", label = "1st token", unit = "sec"),
+    Stat(id = "prefill_speed", label = "Prefill speed", unit = "tokens/s"),
+    Stat(id = "decode_speed", label = "Decode speed", unit = "tokens/s"),
+    Stat(id = "latency", label = "Latency", unit = "sec"),
+  )
 
 @HiltViewModel
 class LlmRagViewModel @Inject constructor() : ChatViewModel() {
@@ -133,6 +145,7 @@ class LlmRagViewModel @Inject constructor() : ChatViewModel() {
     if (textContent.isBlank()) return
 
     viewModelScope.launch {
+      setInProgress(true)
       val userMessage = ChatMessageText(content = textContent, side = ChatSide.USER)
       addMessage(model, userMessage)
 
@@ -140,12 +153,48 @@ class LlmRagViewModel @Inject constructor() : ChatViewModel() {
         val assistantMessage = ChatMessageLoading()
         addMessage(model, assistantMessage)
 
+        val accelerator =
+          model.getStringConfigValue(key = com.google.ai.edge.gallery.data.ConfigKeys.ACCELERATOR, defaultValue = "")
+        val llmSession =
+          when (val instance = (model.instance as? RagModelInstance)?.llmInstance ?: model.instance) {
+            is RagModelInstance -> instance.llmInstance.session
+            is LlmModelInstance -> instance.session
+            else -> null
+          }
+
+        val prefillTokens = llmSession?.sizeInTokens(textContent) ?: 0
+        val start = System.currentTimeMillis()
+        var firstTokenTs = 0L
+        var timeToFirstToken = 0f
+        var prefillSpeed = 0f
+        var decodeTokens = 0
+
         val progressListener = object : AsyncProgressListener<LanguageModelResponse> {
           override fun run(partialResult: LanguageModelResponse, done: Boolean) {
             // Some backends may emit null or empty text in partials; guard it.
             val text = partialResult.text
             if (!text.isNullOrBlank()) {
-              updateLastAssistantMessage(model, text)
+              val now = System.currentTimeMillis()
+              if (firstTokenTs == 0L) {
+                firstTokenTs = now
+                timeToFirstToken = ((now - start).coerceAtLeast(0L)).toFloat() / 1000f
+                if (timeToFirstToken > 0f && prefillTokens > 0) {
+                  prefillSpeed = prefillTokens / timeToFirstToken
+                }
+              }
+
+              // Track generated tokens using total text tokens to approximate decode speed.
+              val totalTokens = llmSession?.sizeInTokens(text) ?: 0
+              if (totalTokens > 0) {
+                decodeTokens = totalTokens
+              }
+
+              updateLastAssistantMessage(
+                model = model,
+                text = text,
+                latencyMs = -1f,
+                accelerator = accelerator,
+              )
             }
           }
         }
@@ -159,13 +208,57 @@ class LlmRagViewModel @Inject constructor() : ChatViewModel() {
         _retrievedDocuments.value = retrievalResult?.sourceDocuments ?: emptyList()
 
         // Final update with complete response
-        updateLastAssistantMessage(model, response)
+        val endTs = System.currentTimeMillis()
+        val totalLatencySec = ((endTs - start).coerceAtLeast(0L)).toFloat() / 1000f
+        if (timeToFirstToken == 0f) {
+          // No partial updates received; treat entire latency as prefill time.
+          timeToFirstToken = totalLatencySec
+          if (timeToFirstToken > 0f && prefillTokens > 0) {
+            prefillSpeed = prefillTokens / timeToFirstToken
+          }
+        }
+
+        val decodeDurationSec =
+          if (firstTokenTs == 0L) 0f else ((endTs - firstTokenTs).coerceAtLeast(0L)).toFloat() / 1000f
+        val decodeSpeed = if (decodeDurationSec > 0f && decodeTokens > 0) {
+          decodeTokens / decodeDurationSec
+        } else {
+          0f
+        }
+
+        val benchmark =
+          ChatMessageBenchmarkLlmResult(
+            orderedStats = LLM_STATS,
+            statValues =
+              mutableMapOf(
+                "prefill_speed" to prefillSpeed,
+                "decode_speed" to decodeSpeed,
+                "time_to_first_token" to timeToFirstToken,
+                "latency" to totalLatencySec,
+              ),
+            running = false,
+            latencyMs = -1f,
+            accelerator = accelerator,
+          )
+
+        updateLastAssistantMessage(
+          model = model,
+          text = response,
+          latencyMs = (endTs - start).toFloat(),
+          accelerator = accelerator,
+          llmBenchmarkResult = benchmark,
+        )
 
       } catch (e: Exception) {
         Log.e(TAG, "Failed to send message: ${e.message}")
-        updateLastAssistantMessage(model, "Error: ${e.message}")
+        updateLastAssistantMessage(
+          model = model,
+          text = "Error: ${e.message}",
+          latencyMs = -1f,
+        )
       } finally {
         RagContextManager.clearChatTurn(model)
+        setInProgress(false)
       }
     }
   }
@@ -248,13 +341,26 @@ class LlmRagViewModel @Inject constructor() : ChatViewModel() {
     addMessage(model, systemMessage)
   }
 
-  private fun updateLastAssistantMessage(model: Model, text: String) {
+  private fun updateLastAssistantMessage(
+    model: Model,
+    text: String,
+    latencyMs: Float = -1f,
+    accelerator: String = "",
+    llmBenchmarkResult: ChatMessageBenchmarkLlmResult? = null,
+  ) {
     val lastMessage = getLastMessage(model)
-    if (lastMessage != null && lastMessage.side == ChatSide.AGENT) {
+    val message =
+      ChatMessageText(
+        content = text,
+        side = ChatSide.AGENT,
+        latencyMs = latencyMs,
+        accelerator = accelerator,
+      ).apply { this.llmBenchmarkResult = llmBenchmarkResult }
+
+    if (lastMessage?.type == ChatMessageType.LOADING || lastMessage is ChatMessageText && lastMessage.side == ChatSide.AGENT) {
       removeLastMessage(model)
-      val updatedMessage = ChatMessageText(content = text, side = ChatSide.AGENT)
-      addMessage(model, updatedMessage)
     }
+    addMessage(model, message)
   }
 
   /**
