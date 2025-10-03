@@ -23,7 +23,6 @@ import com.google.ai.edge.gallery.data.ConfigKeys
 import com.google.ai.edge.gallery.data.Model
 import com.google.ai.edge.gallery.ui.llmrag.RagKnowledgeBase
 import com.google.ai.edge.gallery.ui.modelmanager.ModelManagerViewModel
-import com.google.ai.edge.gallery.ui.llmchat.LlmModelInstance
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -128,20 +127,17 @@ $batchDescription"""
                     source = "video_analysis"
                 )
 
-                if (result.isEmpty()) {
+                return@withContext if (result.isNotEmpty()) {
+                    Log.e(TAG, "Failed to embed video batch in RAG: $result")
+                    result
+                } else {
                     Log.d(TAG, "Successfully stored and embedded video batch: $title")
                     Log.d(TAG, "Physical file location: ${txtFile.absolutePath}")
                     ""
-                } else {
-                    Log.w(TAG, "Failed to embed video batch in RAG: $result")
-                    // Still return success since the file was written successfully
-                    Log.d(TAG, "File was still written successfully to: ${txtFile.absolutePath}")
-                    ""
                 }
             } else {
-                Log.w(TAG, "Embedding model not available, but file was written successfully")
-                Log.d(TAG, "Physical file location: ${txtFile.absolutePath}")
-                ""
+                Log.e(TAG, "Embedding model not available for video batch: $title")
+                return@withContext "Embedding model not available"
             }
 
         } catch (e: Exception) {
@@ -199,11 +195,10 @@ $batchDescription"""
             // Step 2: Load Gecko embedding model on CPU (VIDEO profiles always use CPU)
             val geckoModel = ragTask.models.find { it.name.contains("Gecko", ignoreCase = true) }
             if (geckoModel == null) {
-                Log.w(TAG, "Gecko embedding model not found for RAG initialization")
+                Log.e(TAG, "Gecko embedding model not found for RAG initialization")
                 return@withContext "Gecko embedding model not found"
             }
 
-            var embeddingModel: Model? = null
             try {
                 // Force CPU acceleration for embedding model to avoid GPU contention with VLM
                 val updatedConfigs = geckoModel.configValues.toMutableMap()
@@ -222,7 +217,6 @@ $batchDescription"""
                 }
 
                 if (geckoModel.instance != null) {
-                    embeddingModel = geckoModel
                     Log.d(TAG, "Successfully loaded embedding model on CPU (VLM stays on GPU)")
                 } else {
                     Log.e(TAG, "Failed to load embedding model on CPU")
@@ -231,24 +225,20 @@ $batchDescription"""
 
                 // Step 3: Embed the file content into RAG system (runs on CPU, no GPU conflict)
                 val result = RagKnowledgeBase.memorizeChunks(
-                    model = embeddingModel,
+                    model = geckoModel,
                     chunks = chunkText(documentContent),
                     title = title,
                     source = "video_analysis"
                 )
 
-                val finalResult = if (result.isEmpty()) {
+                return@withContext if (result.isNotEmpty()) {
+                    Log.e(TAG, "Failed to embed video batch in RAG: $result")
+                    result
+                } else {
                     Log.d(TAG, "Successfully stored and embedded video batch: $title")
                     Log.d(TAG, "Physical file location: ${txtFile.absolutePath}")
                     ""
-                } else {
-                    Log.w(TAG, "Failed to embed video batch in RAG: $result")
-                    // Still return success since the file was written successfully
-                    Log.d(TAG, "File was still written successfully to: ${txtFile.absolutePath}")
-                    ""
                 }
-
-                return@withContext finalResult
 
             } catch (e: Exception) {
                 Log.e(TAG, "Error during embedding process", e)

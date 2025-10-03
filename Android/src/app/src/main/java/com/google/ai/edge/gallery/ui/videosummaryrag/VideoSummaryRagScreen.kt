@@ -31,8 +31,10 @@ import androidx.compose.ui.Alignment
 import androidx.core.os.bundleOf
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.google.ai.edge.gallery.data.Accelerator
 import com.google.ai.edge.gallery.data.BuiltInTaskId
 import com.google.ai.edge.gallery.data.Model
+import com.google.ai.edge.gallery.data.ConfigKeys
 import com.google.ai.edge.gallery.firebaseAnalytics
 import com.google.ai.edge.gallery.ui.common.chat.ChatView
 import com.google.ai.edge.gallery.ui.common.chat.ChatMessageText
@@ -108,10 +110,30 @@ fun VideoSummaryRagChatViewWrapper(
   }
   var isLoadingPreviewDocument by remember { mutableStateOf(false) }
 
-  // Initialize only document list, models will be loaded on-demand
-  LaunchedEffect(Unit) {
+  // Initialize document list and preload Gecko embedding model on CPU (mirrors RAG Chat behavior)
+  LaunchedEffect(ragTask) {
     modelManagerViewModel.loadModelAllowlistWhenNeeded()
     storedDocuments = RagKnowledgeBase.getDocumentMetadataList()
+
+    val geckoModel = ragTask.models.find { it.name == "Gecko-1024-Embedding" }
+    if (geckoModel != null) {
+      val updatedConfigs = geckoModel.configValues.toMutableMap()
+      val desiredAccelerator = Accelerator.CPU.label
+      if (updatedConfigs[ConfigKeys.ACCELERATOR.label] != desiredAccelerator) {
+        updatedConfigs[ConfigKeys.ACCELERATOR.label] = desiredAccelerator
+        geckoModel.configValues = updatedConfigs.toMap()
+      }
+
+      if (geckoModel.instance == null && !geckoModel.initializing) {
+        Log.d("VideoSummaryRagScreen", "Auto-initializing Gecko embedding model for video RAG (CPU mode)")
+        modelManagerViewModel.initializeModel(context, ragTask, geckoModel)
+      }
+    } else {
+      Log.w(
+        "VideoSummaryRagScreen",
+        "Gecko embedding model not found while preloading for Video Summary RAG",
+      )
+    }
   }
 
   // Monitor for completed batch responses and process them for RAG storage
