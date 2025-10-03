@@ -434,13 +434,46 @@ private fun decodeBitmapWithExif(file: File): Bitmap? {
       }
     }
 
-    if (matrix.isIdentity) {
+    val rotatedBitmap = if (matrix.isIdentity) {
       bitmap
     } else {
       Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
     }
+
+    // Downscale to 768px to match Gemma 3n MobileNet v5 vision encoder resolution
+    downscaleForInference(rotatedBitmap)
   } catch (e: IOException) {
     Log.w(TAG, "Failed to read EXIF metadata", e)
-    bitmap
+    downscaleForInference(bitmap)
   }
+}
+
+/**
+ * Downscales bitmap to maximum 768px to match Gemma 3n's MobileNet v5 vision encoder.
+ * Gemma 3n uses a default resolution of 768x768 pixels for optimal GPU inference.
+ */
+private fun downscaleForInference(bitmap: Bitmap, maxDimension: Int = 768): Bitmap {
+  val width = bitmap.width
+  val height = bitmap.height
+
+  // If already small enough, return as-is
+  if (width <= maxDimension && height <= maxDimension) {
+    return bitmap
+  }
+
+  // Calculate scale factor to fit within maxDimension while preserving aspect ratio
+  val scale = maxDimension.toFloat() / maxOf(width, height)
+  val newWidth = (width * scale).toInt()
+  val newHeight = (height * scale).toInt()
+
+  Log.d(TAG, "Downscaling image from ${width}x${height} to ${newWidth}x${newHeight} for GPU inference")
+
+  val scaledBitmap = Bitmap.createScaledBitmap(bitmap, newWidth, newHeight, true)
+
+  // Recycle original if different from scaled version
+  if (scaledBitmap != bitmap) {
+    bitmap.recycle()
+  }
+
+  return scaledBitmap
 }

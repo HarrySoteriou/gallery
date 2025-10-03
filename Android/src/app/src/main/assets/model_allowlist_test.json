@@ -51,7 +51,7 @@
         "topK": 64,
         "topP": 0.95,
         "temperature": 1.0,
-        "maxTokens": 1024,
+        "maxTokens": 4096,
         "accelerators": "gpu,cpu"
       },
       "taskTypes": ["llm_chat", "llm_prompt_lab", "llm_rag", "llm_video_analysis_rag"],
